@@ -39,6 +39,13 @@ export type TimetableStop = {
   track: number | null
   maxSpeed: number | null
   mileage: number
+  /**
+   * Stop lies outside the simulated area. SimRail still lists these on a
+   * train's schedule but fills them with stubs — line 0, mileage 0, and a
+   * constant "platform I track 2" — so none of those fields mean anything
+   * and must not be shown as if they did.
+   */
+  offMap: boolean
 }
 
 export type TrainTimetable = {
@@ -112,6 +119,8 @@ function normalizePost(raw: string | null): string | null {
 function mapStop(s: ApiStop): TimetableStop {
   const arrivalSec = timestampToSec(s.arrivalTime)
   const departureSec = timestampToSec(s.departureTime)
+  // Line 0 at mileage 0 is the off-map stub, never a real line.
+  const offMap = s.line === 0 && s.mileage === 0
   return {
     point: s.nameForPerson || s.nameOfPoint,
     supervisedBy: normalizePost(s.supervisedBy),
@@ -120,11 +129,12 @@ function mapStop(s: ApiStop): TimetableStop {
     arrival: secToHHMM(arrivalSec),
     departure: secToHHMM(departureSec),
     kind: stopKind(s.stopType),
-    line: s.line,
-    platform: s.platform,
-    track: s.track,
-    maxSpeed: s.maxSpeed,
+    line: offMap || s.line === 0 ? null : s.line,
+    platform: offMap ? null : s.platform,
+    track: offMap ? null : s.track,
+    maxSpeed: offMap ? null : s.maxSpeed,
     mileage: s.mileage,
+    offMap,
   }
 }
 
@@ -157,8 +167,12 @@ export function serverMsToSec(ms: number): number {
   return Math.floor(ms / 1000) % SEC_IN_DAY
 }
 
+// Bump when the stored shape changes, so old entries are re-fetched rather
+// than read back missing fields. v2 added `offMap`.
+const CACHE_VERSION = 'tt2'
+
 const cacheKey = (serverCode: string, trainNo: string) =>
-  `tt:${serverCode}:${trainNo}`
+  `${CACHE_VERSION}:${serverCode}:${trainNo}`
 
 export async function fetchTrainTimetable(
   serverCode: string,

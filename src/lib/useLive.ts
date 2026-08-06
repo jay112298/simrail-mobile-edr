@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
-import { fetchServers, fetchTrains } from './api'
-import { SERVERS as MOCK_SERVERS, type Server, type Train } from '../data'
+import { fetchServers, fetchStations, fetchTrains } from './api'
+import {
+  FALLBACK_STATIONS,
+  SERVERS as MOCK_SERVERS,
+  type DispatchStation,
+  type Server,
+  type Train,
+} from '../data'
 import { trainsForServer } from '../data'
 
 export type LoadState<T> = {
@@ -39,6 +45,37 @@ export function useServers(): LoadState<Server[]> {
       })
     return () => ctrl.abort()
   }, [])
+
+  return state
+}
+
+/**
+ * Dispatch posts available on a server (61 on PL1, vs the 7 that used to be
+ * hardcoded). Refetched per server; the occupancy counts go stale, but the
+ * list itself is what matters for choosing a post.
+ */
+export function useStations(serverCode: string): LoadState<DispatchStation[]> {
+  const [state, setState] = useState<LoadState<DispatchStation[]>>(() =>
+    initial(FALLBACK_STATIONS),
+  )
+
+  useEffect(() => {
+    const ctrl = new AbortController()
+    setState((prev) => ({ ...prev, loading: true }))
+    fetchStations(serverCode, ctrl.signal)
+      .then((data) => {
+        setState({ data, loading: false, error: null, updatedAt: Date.now() })
+      })
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        }))
+      })
+    return () => ctrl.abort()
+  }, [serverCode])
 
   return state
 }

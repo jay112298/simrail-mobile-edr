@@ -12,6 +12,18 @@ import type { TimetableStop, TrainTimetable } from './timetable'
 const SEC_IN_DAY = 24 * 3600
 
 /**
+ * How long after its booked departure a train stays on the list once its
+ * timetable index has moved past this post.
+ *
+ * The index is not a position: it advances to the next entry while the train
+ * is still standing at the platform waiting to leave. Treating "index past
+ * the exit" as "gone" hid trains that were still sitting at the station,
+ * which is exactly when a dispatcher most needs to see them. Erring towards
+ * showing a train that just left beats dropping one that has not.
+ */
+const CLEARED_GRACE_SEC = 10 * 60
+
+/**
  * Signed difference between two seconds-of-day, taking the short way round
  * midnight. Without this a train booked 23:58 read at 00:03 looks 23 h 55 m
  * early instead of 5 m late.
@@ -123,6 +135,27 @@ export function findPostWindow(
   }
 }
 
+/**
+ * Has the train finished with this post?
+ *
+ * Requires both signals to agree: the timetable index has moved beyond the
+ * post's last point, and the clock has run past its booked departure by more
+ * than the grace period. A train booked out at 09:34 is still this
+ * dispatcher's problem at 09:21 no matter what the index says.
+ */
+export function hasClearedPost(
+  win: PostWindow | null,
+  currentIdx: number,
+  serverNowSec: number | null,
+): boolean {
+  if (!win) return false
+  if (currentIdx <= win.exitIdx) return false
+  // Without a clock or a booked departure there is no safe way to tell, so
+  // keep showing it rather than silently dropping it.
+  if (serverNowSec === null || win.departureSec === null) return false
+  return wrapDiffSec(serverNowSec, win.departureSec) > CLEARED_GRACE_SEC
+}
+
 /** Does this train pass through the given dispatch post at all? */
 export function passesPost(tt: TrainTimetable, postName: string): boolean {
   return tt.stops.some((s) => s.supervisedBy === postName)
@@ -171,9 +204,11 @@ export function applyTimetable(
     nextPoint: nextStop?.point,
     onwardPoint: win?.onwardPoint,
     onwardLine: win?.onwardLine ?? null,
-    // True once the train has worked past the last point this post controls,
-    // i.e. it is no longer this dispatcher's problem.
-    clearedPost: win ? idx > win.exitIdx : false,
+    // Gone only when the index has moved past this post *and* the clock is
+    // well past its booked departure. Either signal alone is wrong: the index
+    // moves early, and the schedule alone ignores where the train actually
+    // is. With no clock or no booked departure, keep the train listed.
+    clearedPost: hasClearedPost(win, idx, serverNowSec),
     toPost: win?.onwardPoint ?? train.toPost,
   }
 }

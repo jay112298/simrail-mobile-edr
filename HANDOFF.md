@@ -1,128 +1,153 @@
 # SimRail Mobile EDR — Session Handoff
 
-Snapshot for resuming work in a fresh Claude Code session (e.g. on a different machine). Read this first, then `git log --oneline -20` for recent activity.
+Snapshot for resuming work in a fresh Claude Code session. Read this first,
+then `git log --oneline -20`.
 
 **Repo:** https://github.com/jay112298/simrail-mobile-edr
-**Origin baseline for this handoff:** `main` @ PR #11 merged (Phase 4 live API).
 
 ---
 
 ## 1. Project in one paragraph
 
-Phone-first PWA that acts as an Electronic Dispatch Record (EDR) for the SimRail Polish railway simulator. Runs in the browser, installable to home screen, no server of its own. Data comes from SimRail's public panel API (`panel.simrail.eu:8084`) with a mock fallback so first paint is never empty. Primary user is a dispatcher; a train-driver mode is planned but not built.
+Phone-first Electronic Dispatch Record for the SimRail Polish railway
+simulator, shipped as a **native Android APK** (Capacitor) that needs no
+hosting of any kind. It joins SimRail's live train feed to the scheduled
+timetable so a dispatcher sees the trains inside their post's boundary, when
+each is booked through, which platform and track it takes, and where it is
+routed next. Primary user is a dispatcher; a driver mode is planned.
 
-Stack: React 19 + TypeScript + Vite 8 + Tailwind v4 + `vite-plugin-pwa` (autoUpdate) + `oxlint`. No test runner yet.
+Stack: React 19 + TypeScript + Vite 8 + Tailwind v4 + Capacitor 8 +
+`vite-plugin-pwa` + `oxlint`. **No test runner yet.**
 
 ---
 
 ## 2. Where the work stands
 
-Phases finished (each is one squash-merged PR — see `git log`):
+Phases 0–2 shipped as PRs #1–#9 (data model, ETA countdown, driver badges,
+conflict detection, detail sheet, bottom nav, UX polish, server switcher).
+Then:
 
-| Phase | PR  | What shipped                                                                |
-|-------|-----|-----------------------------------------------------------------------------|
-| 0     | #1  | Expanded data model (Station, Post, Platform, Stop, Train priority, etc.)  |
-| 1a    | #2  | Live ETA countdown + auto-sort by ETA                                       |
-| 1b    | #3  | PLAYER/AI driver badge + Player filter                                      |
-| 1c    | #4  | Platform-conflict detection (window-overlap)                                |
-| 1d    | #5  | TrainDetail bottom-sheet on card tap                                        |
-| 1e    | #6  | Bottom nav wired to view state                                              |
-| 2 (a) | #7  | Priority chip, sticky header fix, font bumps, empty-state CTA               |
-| 2 (b) | #8  | Filter counts, haptic taps, persist state via `useLocalStorage`             |
-| 2C    | #9  | Server switcher UI (bottom-sheet picker)                                    |
-| fix   | #10 | Wire train list to selected server (deterministic mock jitter)              |
-| 4     | #11 | Live SimRail data: `/servers-open` + `/trains-open` polled every 15 s       |
+| Phase | PR   | What shipped                                                    |
+|-------|------|------------------------------------------------------------------|
+| fix   | #10  | Wire train list to selected server                               |
+| 4     | #11  | Live SimRail data: `/servers-open` + `/trains-open`, 15 s poll   |
+| fix   | —    | NaN ETAs, false red signals, region grouping, server flash       |
+| 5     | —    | **Android APK + live timetable + dense views** (branch below)    |
+| fix   | —    | Trains standing at the post no longer hidden                     |
+| —     | —    | **Station coverage: 7 hardcoded → 61 from the API**              |
 
-**Next per plan:**
-- **Phase 3 — Driver mode** (deferred, needs Phase 4.5 first). Route timetable, next signal, speed profile.
-- **Phase 4.5 — Timetable proxy.** `api1.aws.simrail.eu:8082/api/getAllTimetables` has scheduled arrival/departure/platform but **no CORS headers**, so the browser can't hit it directly. Need a tiny serverless proxy (Cloudflare Worker or Vercel Edge — pick one). Until then, live trains show `--:--` and `-` for arr/dep/platform.
-- **Phase 5 — PWA polish.** Offline cache of last-good API responses, notifications for new platform conflicts.
+Current branch: `phase-5/android-apk-timetable` (not yet merged to `main`).
+
+### Phase 4.5 is CANCELLED — do not build the timetable proxy
+
+Earlier notes said a Cloudflare/Vercel proxy was needed because
+`api1.aws.simrail.eu:8082` sends no CORS headers. **Going native removed that
+constraint entirely.** CapacitorHttp routes `fetch` through native Java HTTP
+where CORS does not apply, and `vite.config.ts` proxies the same paths for
+browser development. No serverless anything is required.
+
+### Next up
+
+- **Phase 3 — driver mode.** Now unblocked; the timetable already carries
+  `maxSpeed`, `mileage`, `line` and the full stop list.
+- **Phase 5 remainder** — conflict notifications, offline cache of last-good
+  live responses (timetables are already cached; positions are not).
+- **UI/features pass** — the user wants to revisit this once the data layer
+  is trusted.
 
 ---
 
-## 3. Conventions to follow
+## 3. Conventions
 
-- **Branch strategy:** `main` + short-lived `phase-N/<slug>` or `fix/<slug>` branches. One PR per branch. Squash-merge. Delete branch on merge.
-- **Commit style:** conventional prefixes (`feat(area): ...`, `fix(area): ...`, `chore: ...`). Wrap body at ~72 cols. End every commit with the Claude Code co-author trailer.
-- **PR body:** `## Summary` bullets + `## Test plan` checklist. Same trailer.
-- **User asks for terse output** — CAVEMAN MODE (skill fires each turn). Fragments OK in chat, but code / commit messages / docs / PRs stay in normal English.
-- **Never commit unless the user asks.** They've been explicit about that. When the plan clearly says "merge and continue", proceeding without asking each time is fine.
-- **On Termux (Android phone):** `npm run build` takes 2–3 min because arm64 mobile is slow. `npx tsc -b` and `npx oxlint` finish in seconds and are usually sufficient before pushing.
-- **Never `git push --force` on `main`.** Rebase locally, force-push to feature branches only if needed.
+- Branches `phase-N/<slug>` or `fix/<slug>`; one PR each; squash-merge.
+- Conventional commits (`feat(area):`, `fix(area):`), body wrapped ~72 cols,
+  Claude Code co-author trailer on every commit.
+- **Never commit unless asked.**
+- **Every major update ships the APK too** — run `npm run apk`, commit the
+  refreshed `dist-apk/simrail-edr.apk` with the code. The user installs from
+  the GitHub page on their phone.
+- `npx tsc -b` and `npx oxlint` before pushing; both must exit 0.
 
 ---
 
-## 4. Architecture map
-
-Directory layout that matters:
+## 4. Architecture
 
 ```
 src/
-  App.tsx                 — root component (filters, sticky header, bottom nav, modals)
-  TrainDetail.tsx         — bottom-sheet route + vitals view
-  InstallPrompt.tsx       — PWA install banner (untouched since baseline)
-  data.ts                 — Types + STATIONS + SERVERS + TRAINS mock + trainsForServer()
+  App.tsx              root: filters, densities, boundary scope, settings
+  TrainViews.tsx       dense-row + table renderings
+  TrainDetail.tsx      bottom-sheet route + vitals
+  data.ts              types, mock fallback, DispatchStation
   lib/
-    dispatch.ts           — useSimNow(), computeETASec(), detectConflicts(), sortByETA()
-    api.ts                — SimRail panel API client + type mappers
-    useLive.ts            — useServers() + useTrains(code) hooks (polling)
-    storage.ts            — useLocalStorage<T> (prefix "simrail-edr:")
-    haptic.ts             — hapticTap() — navigator.vibrate no-op fallback
+    api.ts             panel API: servers, stations, live trains
+    timetable.ts       timetable API + IndexedDB-cached per-train fetch
+    useTimetable.ts    server clock + progressive timetable resolution
+    useLive.ts         useServers / useStations / useTrains
+    enrich.ts          joins live telemetry to booked schedule
+    dispatch.ts        ETA, conflict detection, sorting
+    ui.ts              shared presentation helpers
+    idb.ts             minimal IndexedDB key/value store
 ```
 
-Key runtime pattern:
-
-1. `App` reads `serverCode` from `useLocalStorage('server', ...)`.
-2. `useTrains(currentServer.code)` polls `/trains-open?serverCode=...` every 15 s. Aborts on unmount / server change.
-3. First-paint fallback = `trainsForServer(code)` (deterministic hash-jittered subset of the mock `TRAINS` array).
-4. `detectConflicts(trains)`, `sortByETA(trains, nowSec)`, and `filterCounts` all recompute via `useMemo` on `trains` or `nowSec`.
-5. `useSimNow()` ticks at 1 Hz and is anchored to `MOCK_ANCHOR_SEC = 8*3600` so the mock timetable stays "current-looking" until real timetable data replaces it.
+Runtime flow: pick server → `/stations-open` gives the 61 posts →
+`/trains-open` polls live positions every 15 s → each train's timetable is
+fetched once (~10 KB) and cached in IndexedDB → `enrich.ts` merges the two →
+boundary filter keeps only trains whose timetable names this post in
+`supervisedBy`.
 
 ---
 
-## 5. Known gaps / gotchas
+## 5. Hard-won facts about the data
 
-- **Mock-time anchoring** (`MOCK_ANCHOR_SEC` in `src/lib/dispatch.ts`) — swap to wall clock when the timetable proxy lands; today it pins to 08:00 sim-time so the demo works.
-- **Live trains lack timetable fields.** `arr`, `dep`, `platform`, `line`, `length`, `weight`, `distance`, `delay`, `stops[]` are all sentinels (`--:--`, `-`, `0`) for API-sourced trains. See mapper in `src/lib/api.ts::mapTrain`.
-- **Signal state mapping** is heuristic (`SignalInFrontSpeed`): `0 → red`, `32767 → green`, `>0 && <32767 → yellow`. Confirm against SimRail source if it starts feeling wrong.
-- **Driver detection**: SimRail returns `Type: "user" | "bot"`. We map `user → player`, `bot → bot` (internal type is `Driver = 'player' | 'bot'`).
-- **CORS on panel API** reflects `Origin` — dev (`http://localhost:5173`) and any prod origin both work. The timetable host does not.
+Do not relearn these the hard way.
 
----
-
-## 6. How to resume on a new machine
-
-```sh
-# 1. Clone
-git clone https://github.com/jay112298/simrail-mobile-edr.git
-cd simrail-mobile-edr
-
-# 2. Install
-npm install
-
-# 3. Verify the toolchain
-npx tsc -b         # should exit 0
-npx oxlint         # should exit 0
-npm run dev        # http://localhost:5173
-
-# 4. Confirm GitHub CLI auth (needed to open PRs the same way)
-gh auth status
-```
-
-Then open a fresh Claude Code session in the repo and paste:
-
-> Read `HANDOFF.md`. We were mid-way through the plan. Next phase is 4.5 (timetable proxy) or 5 (PWA polish) — user's call. Follow the conventions in section 3.
-
-That is enough context. Do **not** try to import the old chat JSONL — the working-directory-hashed path won't match on a new machine and Claude Code won't load it.
+- **The in-game clock is not wall time.** `/getTime` runs on its own offset
+  (observed several hours behind). Every scheduled comparison uses it; using
+  `Date.now()` skews every ETA.
+- **`VDDelayedTimetableIndex` is not a position.** It advances to the next
+  entry while the train is still standing at the platform. Treating
+  "index past the post" as "gone" hid trains that were still at the station.
+  `hasClearedPost` requires the index *and* the clock past booked departure.
+- **A post controls a run of points, not one.** Skierniewice spans
+  `Skierniewice M PZS` → `Skierniewice` → `Skierniewice P PZS`. The
+  occupation window spans entry arrival to exit departure.
+- **`SignalInFront: null` means no signal data**, and the feed zeroes the
+  speed and distance fields alongside it. That is not a red aspect.
+- **Station names are the join key**, matched exactly against `supervisedBy`.
+  54 of 61 match; the other 7 have no booked traffic and are likely sub-posts
+  under a parent name. Station *prefixes* are NOT unique — two share "KO".
+- **The whole-server timetable dump is ~21 MB** and the host ignores
+  `Accept-Encoding`. Unusable on a phone. Per-train queries are ~10 KB.
+- **`supervisedBy` can be a single space**, meaning no controlling post.
+  Trim before comparing or it will match a blank station name.
 
 ---
 
-## 7. Optional: audit trail
+## 6. Toolchain on the user's Mac
 
-The full pre-handoff transcript lives locally at:
+- System Java is 11 — **too old** for the Android Gradle Plugin. Use
+  `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`
+  (JDK 21) and `ANDROID_HOME="$HOME/Library/Android/sdk"`.
+- **`gh` is not installed** and there is no token in the environment. PRs and
+  Releases cannot be created from the CLI; `git push` works via keychain.
+  Push the branch and hand over the `pull/new/<branch>` URL.
+- **No emulator AVDs and no attached device**, so an APK built here cannot be
+  run or verified locally — only that it builds. Say so rather than implying
+  it was tested.
 
-```
-~/.claude/projects/<hashed-cwd>/<session-id>.jsonl
-```
+---
 
-on the Termux machine. It is **not** portable to another machine's Claude Code and cannot be imported into the Claude.ai desktop app. Treat this document + `git log` as the authoritative history.
+## 7. Known gaps
+
+- **No tests.** `enrich.ts` and `dispatch.ts` now hold real algorithms
+  (post-run windows, midnight wraparound, conflict overlap). The
+  three-consecutive-points bug is exactly what a unit test would have caught.
+- **APK is committed to the repo** (~4 MB per update, bloats history). Move to
+  GitHub Release assets once `gh` is authenticated.
+- **Silent mock fallback.** If the network drops, the app shows the mock train
+  set with only a small amber dot as the tell. For a dispatch tool that is
+  dangerous — it should say plainly that it is showing sample data.
+- **Debug-signed APK**; needs release signing for wider distribution.
+- Switching servers refetches ~150 timetables (~30 s) before the list fills.
+- Midnight-crossing trains: `wrapDiffSec` handles delay, ETA sorting across
+  the boundary is untested.

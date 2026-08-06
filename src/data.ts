@@ -33,6 +33,28 @@ export type Station = {
   posts: Post[]
 }
 
+/**
+ * A dispatch post the player can actually take, as reported by the panel API.
+ *
+ * `name` is the key: it must equal the timetable's `supervisedBy` value, which
+ * is how trains are scoped to a post. 54 of the 61 playable stations match
+ * exactly; the remainder have no booked traffic at all and are likely
+ * sub-posts controlled under a parent name.
+ *
+ * Station prefixes are NOT unique (two stations share "KO"), so never key on
+ * them.
+ */
+export type DispatchStation = {
+  name: string
+  prefix: string
+  difficulty: number
+  /** How many players are currently signed in to this post. */
+  dispatchedBy: number
+  /** Post position, used for straight-line distance to approaching trains. */
+  lat: number | null
+  lon: number | null
+}
+
 export type SignalState = 'green' | 'yellow' | 'red' | 'unknown'
 export type Driver = 'player' | 'bot'
 export type Category = 'passenger' | 'freight'
@@ -86,6 +108,11 @@ export type Train = {
   signalSpeed?: number
   /** Raw SimRail vehicle ids, locomotive first. */
   vehicles?: string[]
+  /** Steam64 id of the player driving, when it is not an AI train. */
+  controlledBy?: string
+  /** Live position, used for real distance to the dispatch post. */
+  lat?: number
+  lon?: number
 }
 
 export type DestinationInfo = {
@@ -240,6 +267,30 @@ export const STATIONS: Station[] = [
     posts: [],
   },
 ]
+
+/**
+ * Earlier builds stored the mock station id ("ske"); the post is now keyed by
+ * name so it can be matched against the timetable. Without this, an existing
+ * install silently jumps to whichever station sorts first.
+ */
+export function legacyStationName(stored: string): string | null {
+  return STATIONS.find((s) => s.id === stored)?.name ?? null
+}
+
+/**
+ * First-paint station list, used until the live one arrives (or if it fails).
+ * The real list is 61 posts from /stations-open — see useStations.
+ */
+export const FALLBACK_STATIONS: DispatchStation[] = STATIONS.map((s) => ({
+  name: s.name,
+  prefix: s.id.slice(0, 3).toUpperCase(),
+  difficulty: s.difficulty,
+  dispatchedBy: 0,
+  // Coordinates only come from the API; without them distance is simply
+  // not shown rather than guessed.
+  lat: null,
+  lon: null,
+}))
 
 // Post code → destination info (what dispatcher actually needs to see).
 // Keys: full form 'Station X' + short form 'X' for Skierniewice legacy.

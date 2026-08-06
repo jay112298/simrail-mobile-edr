@@ -133,6 +133,11 @@ export function TrainRow({
             </span>
           )}
           <span className="ml-auto flex items-center gap-1.5 shrink-0">
+            {train.distance > 0 && (
+              <span className="text-[11px] text-slate-500 tabular-nums">
+                {train.distance.toFixed(1)}km
+              </span>
+            )}
             {train.live && (
               <>
                 <span className="text-[11px] text-slate-400 tabular-nums">
@@ -214,12 +219,17 @@ export function TrainTable({
       <table className="w-full table-fixed text-[11px] border-collapse">
         <thead className="sticky top-0 bg-slate-900 text-[9px] uppercase tracking-wider text-slate-500">
           <tr className="border-b border-slate-800">
-            <th className="text-left font-semibold px-1.5 py-1.5 w-[48px]">Trn</th>
-            <th className="text-left font-semibold px-0.5 py-1.5 w-[34px]">Typ</th>
-            <th className="text-right font-semibold px-0.5 py-1.5 w-[36px]">Arr</th>
-            <th className="text-right font-semibold px-0.5 py-1.5 w-[36px]">Dep</th>
-            <th className="text-right font-semibold px-0.5 py-1.5 w-[28px]">±</th>
-            <th className="text-left font-semibold px-1 py-1.5 w-[50px]">Pl</th>
+            {/* Freight numbers run to six digits; the train number is the one
+                column that must never truncate. */}
+            <th className="text-left font-semibold px-1 py-1.5 w-[62px]">Trn</th>
+            <th className="text-left font-semibold px-0.5 py-1.5 w-[32px]">Typ</th>
+            <th className="text-right font-semibold px-0.5 py-1.5 w-[38px]">Arr</th>
+            {/* Left padding keeps the two times from reading as one number. */}
+            <th className="text-right font-semibold pl-2 pr-0.5 py-1.5 w-[42px]">
+              Dep
+            </th>
+            <th className="text-right font-semibold px-0.5 py-1.5 w-[26px]">±</th>
+            <th className="text-left font-semibold px-1 py-1.5 w-[44px]">Pl</th>
             <th className="text-left font-semibold px-1 py-1.5">Next</th>
           </tr>
         </thead>
@@ -238,9 +248,9 @@ export function TrainTable({
                   conflictsWith.length > 0 ? 'bg-red-500/10' : ''
                 }`}
               >
-                <td className="px-1.5 py-1 font-mono font-bold text-white tabular-nums truncate">
+                <td className="px-1 py-1 font-mono font-bold text-white tabular-nums whitespace-nowrap">
                   {conflictsWith.length > 0 && (
-                    <span className="text-red-400">⚠</span>
+                    <span className="text-red-400 text-[9px] align-top">⚠</span>
                   )}
                   {t.number}
                 </td>
@@ -254,7 +264,7 @@ export function TrainTable({
                 <td className="px-0.5 py-1 text-right font-mono tabular-nums text-slate-300">
                   {t.arrival}
                 </td>
-                <td className="px-0.5 py-1 text-right font-mono tabular-nums text-slate-300">
+                <td className="pl-2 pr-0.5 py-1 text-right font-mono tabular-nums text-slate-300">
                   {t.departure}
                 </td>
                 <td

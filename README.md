@@ -24,14 +24,24 @@ prompt.
 
 ## What it does
 
+- **Every playable post** — all 61 dispatch posts on the server, searchable,
+  with difficulty and whether someone is already manning it.
 - **Boundary filtering** — only trains actually routed through your post, using
-  the timetable's `supervisedBy` field. A busy station is a dozen trains, not
-  the ~150 running server-wide.
+  the timetable's `supervisedBy` field. A busy station is a couple of dozen
+  trains, not the ~150 running server-wide.
 - **Real booked times** — arrival and departure at *your* post, platform and
   track, and the onward point plus line number.
 - **Live telemetry** — current speed, signal aspect, and distance to the next
   signal, polled every 15 s.
 - **Real delay** — computed against the in-game clock, not wall time.
+- **Distance to your post** — straight-line, from live train position to the
+  station's coordinates.
+- **Driver mode** — your own train's full booked route with a "you are here"
+  marker, per-stop countdowns, line kilometre posts and speed limits. Enter
+  your Steam ID once and it finds your train by itself.
+- **Line schematic** — every train within 25 km of your post, plotted by
+  kilometre post on each line through it, with direction of travel and signal
+  aspect. Pure SVG: no tile server, no dependency, works offline.
 - **Platform conflict detection** — overlapping occupation windows on the same
   platform are flagged on both trains.
 - **Three list densities** — switchable in Settings and remembered, because a

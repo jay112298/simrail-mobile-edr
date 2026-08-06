@@ -6,13 +6,18 @@
 //   GET /trains-open?serverCode → live trains for one server
 //   GET /stations-open?serverCode → station list + current dispatcher
 //
-// The richer timetable feed lives on api1.aws.simrail.eu:8082 but that
-// host does NOT send CORS headers, so it cannot be called from the
-// browser directly. When a dispatcher-grade timetable is needed we'll
-// front it with a serverless proxy (later phase). This file sticks to
-// what the browser can reach today.
+// The richer timetable feed lives on api1.aws.simrail.eu:8082, which sends
+// no CORS headers at all. It is reached natively via CapacitorHttp (and a
+// Vite proxy in dev) — see lib/timetable.ts. No server-side proxy needed.
 
-import type { Category, Driver, Server, ServerRegion, Train } from '../data'
+import type {
+  Category,
+  DispatchStation,
+  Driver,
+  Server,
+  ServerRegion,
+  Train,
+} from '../data'
 
 const BASE = 'https://panel.simrail.eu:8084'
 
@@ -105,6 +110,44 @@ export async function fetchServers(signal?: AbortSignal): Promise<Server[]> {
     })
 }
 
+// --- Stations ----------------------------------------------------------
+
+type ApiStation = {
+  Name: string
+  Prefix: string
+  DifficultyLevel: number
+  // Yes, the API really does spell it "Latititude".
+  Latititude: number | null
+  Longitude: number | null
+  DispatchedBy: { ServerCode: string; SteamId: string | null }[] | null
+}
+
+/**
+ * Every dispatch post a player can take on this server (61 on PL1).
+ *
+ * Sorted by name so the picker is scannable; the caller groups or filters.
+ * Station `Name` is the join key against the timetable's `supervisedBy`.
+ */
+export async function fetchStations(
+  serverCode: string,
+  signal?: AbortSignal,
+): Promise<DispatchStation[]> {
+  const data = await fetchJson<ApiStation[]>(
+    `/stations-open?serverCode=${encodeURIComponent(serverCode)}`,
+    signal,
+  )
+  return data
+    .map((s) => ({
+      name: s.Name,
+      prefix: s.Prefix,
+      difficulty: s.DifficultyLevel,
+      dispatchedBy: s.DispatchedBy?.length ?? 0,
+      lat: s.Latititude ?? null,
+      lon: s.Longitude ?? null,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 // --- Trains ------------------------------------------------------------
 
 // Train priority derived from TrainName field: SimRail encodes it as
@@ -192,6 +235,9 @@ function mapTrain(t: ApiTrain): Train {
         ? signalLimit
         : undefined,
     vehicles: t.Vehicles,
+    controlledBy: t.TrainData.ControlledBySteamID ?? undefined,
+    lat: t.TrainData.Latititute,
+    lon: t.TrainData.Longitute,
   }
 }
 
