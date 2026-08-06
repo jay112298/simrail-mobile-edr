@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
-import { resolveDestination, type Train, type Stop } from './data'
+import { useEffect, type ReactNode } from 'react'
+import { badgeClass, resolveDestination, type Train, type Stop } from './data'
+import { vehicleName } from './lib/api'
 import {
   computeETASec,
   etaLabel,
@@ -19,6 +20,15 @@ const SIGNAL_STYLE = {
   red: { label: 'Red', cls: 'bg-red-500/20 text-red-300 border-red-500/40' },
   unknown: { label: 'Unknown', cls: 'bg-slate-800 text-slate-400 border-slate-700' },
 } as const
+
+function Vital({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
+      <p className="text-[11px] uppercase text-slate-500 tracking-wider">{label}</p>
+      {children}
+    </div>
+  )
+}
 
 function StopRow({
   stop,
@@ -126,7 +136,7 @@ export default function TrainDetail({
 
           <div className="flex items-center gap-2 mb-2">
             <span
-              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white badge-${dest.badge.toLowerCase()}`}
+              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white ${badgeClass(dest.badge)}`}
             >
               {dest.badge}
             </span>
@@ -150,48 +160,84 @@ export default function TrainDetail({
         <div className="overflow-y-auto flex-1 pb-4">
           {/* Vitals grid */}
           <div className="grid grid-cols-2 gap-2 p-3 text-xs">
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">ETA</p>
+            <Vital label="ETA">
               <p className={`font-semibold mt-0.5 ${urgency === 'now' || urgency === 'imminent' ? 'text-red-300' : urgency === 'soon' ? 'text-amber-300' : 'text-white'}`}>
                 {etaLabel(etaSec)}
               </p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Delay</p>
-              <p className={`font-semibold mt-0.5 ${train.delay > 0 ? 'text-red-400' : train.delay < 0 ? 'text-emerald-400' : 'text-slate-300'}`}>
-                {train.delay === 0 ? 'On time' : train.delay > 0 ? `+${train.delay}′` : `${train.delay}′`}
+            </Vital>
+            <Vital label="Delay">
+              {/* The live feed reports no schedule, so it cannot report a
+                  delay either — "on time" would be an unearned claim. */}
+              <p className={`font-semibold mt-0.5 ${train.live ? 'text-slate-500' : train.delay > 0 ? 'text-red-400' : train.delay < 0 ? 'text-emerald-400' : 'text-slate-300'}`}>
+                {train.live
+                  ? '—'
+                  : train.delay === 0
+                  ? 'On time'
+                  : train.delay > 0
+                  ? `+${train.delay}′`
+                  : `${train.delay}′`}
               </p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Speed</p>
+            </Vital>
+            <Vital label="Speed">
               <p className="font-semibold mt-0.5 text-white">
-                {train.speed} <span className="text-slate-500 text-xs">/ {train.maxSpeed} km/h</span>
+                {train.speed}
+                <span className="text-slate-500 text-xs">
+                  {train.maxSpeed > 0 ? ` / ${train.maxSpeed} km/h` : ' km/h'}
+                </span>
               </p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Signal</p>
+            </Vital>
+            <Vital label="Signal">
               <span className={`inline-block mt-0.5 text-[11px] px-2 py-0.5 rounded-full border font-semibold ${signal.cls}`}>
                 {signal.label}
+                {train.signalSpeed !== undefined && ` · ${train.signalSpeed} km/h`}
               </span>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Length</p>
-              <p className="font-semibold mt-0.5 text-white">{train.length} m</p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Weight</p>
-              <p className="font-semibold mt-0.5 text-white">{train.weight} t</p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Line</p>
-              <p className="font-semibold mt-0.5 text-white">{train.line}</p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Distance</p>
-              <p className="font-semibold mt-0.5 text-white">
-                {train.distance > 0 ? `${train.distance.toFixed(1)} km` : 'At station'}
-              </p>
-            </div>
+            </Vital>
+
+            {train.live ? (
+              <>
+                <Vital label="Consist">
+                  <p className="font-semibold mt-0.5 text-white">
+                    {train.vehicles?.length ?? 0} veh
+                  </p>
+                </Vital>
+                <Vital label="Traction">
+                  <p className="font-semibold mt-0.5 text-white truncate">
+                    {train.vehicles?.[0] ? vehicleName(train.vehicles[0]) : '—'}
+                  </p>
+                </Vital>
+                <Vital label="To signal">
+                  <p className="font-semibold mt-0.5 text-white">
+                    {train.signalDistance !== undefined
+                      ? train.signalDistance < 1000
+                        ? `${train.signalDistance} m`
+                        : `${(train.signalDistance / 1000).toFixed(1)} km`
+                      : '—'}
+                  </p>
+                </Vital>
+                <Vital label="Destination">
+                  <p className="font-semibold mt-0.5 text-white truncate">
+                    {train.toPost}
+                  </p>
+                </Vital>
+              </>
+            ) : (
+              <>
+                <Vital label="Length">
+                  <p className="font-semibold mt-0.5 text-white">{train.length} m</p>
+                </Vital>
+                <Vital label="Weight">
+                  <p className="font-semibold mt-0.5 text-white">{train.weight} t</p>
+                </Vital>
+                <Vital label="Line">
+                  <p className="font-semibold mt-0.5 text-white">{train.line}</p>
+                </Vital>
+                <Vital label="Distance">
+                  <p className="font-semibold mt-0.5 text-white">
+                    {train.distance > 0 ? `${train.distance.toFixed(1)} km` : 'At station'}
+                  </p>
+                </Vital>
+              </>
+            )}
           </div>
 
           {/* Route */}
@@ -199,17 +245,24 @@ export default function TrainDetail({
             <h3 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold px-1 mt-2 mb-1">
               Route
             </h3>
-            <ol className="relative bg-slate-800/40 border border-slate-800 rounded-lg divide-y divide-slate-800">
-              <span className="absolute left-[13px] top-4 bottom-4 w-px bg-slate-700" />
-              {train.stops.map((stop, i) => (
-                <StopRow
-                  key={`${stop.station}-${i}`}
-                  stop={stop}
-                  isCurrent={i === currentIdx}
-                  isPast={currentIdx >= 0 && i < currentIdx}
-                />
-              ))}
-            </ol>
+            {train.stops.length === 0 ? (
+              <p className="bg-slate-800/40 border border-slate-800 rounded-lg p-3 text-xs text-slate-500">
+                No timetable for this train yet — the live feed reports position
+                and signalling only.
+              </p>
+            ) : (
+              <ol className="relative bg-slate-800/40 border border-slate-800 rounded-lg divide-y divide-slate-800">
+                <span className="absolute left-[13px] top-4 bottom-4 w-px bg-slate-700" />
+                {train.stops.map((stop, i) => (
+                  <StopRow
+                    key={`${stop.station}-${i}`}
+                    stop={stop}
+                    isCurrent={i === currentIdx}
+                    isPast={currentIdx >= 0 && i < currentIdx}
+                  />
+                ))}
+              </ol>
+            )}
           </div>
         </div>
       </div>

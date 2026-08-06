@@ -1,14 +1,16 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import {
   REGION_LABEL,
   SERVERS as FALLBACK_SERVERS,
   STATIONS,
+  badgeClass,
   resolveDestination,
   type Server,
   type ServerRegion,
   type Station,
   type Train,
 } from './data'
+import { normalizeRegion } from './lib/api'
 import { useServers, useTrains } from './lib/useLive'
 import {
   computeETASec,
@@ -17,8 +19,19 @@ import {
   etaUrgency,
   sortByETA,
   useSimNow,
-  type Urgency,
 } from './lib/dispatch'
+import { useServerTime, useTimetables } from './lib/useTimetable'
+import { applyTimetable, passesPost } from './lib/enrich'
+import { TrainRow, TrainTable } from './TrainViews'
+import {
+  SIGNAL_BADGE,
+  SIGNAL_LABEL,
+  URGENCY_STYLE,
+  formatDelay,
+  formatMetres,
+  priorityChipCls,
+  statusBadge,
+} from './lib/ui'
 import { useLocalStorage } from './lib/storage'
 import { hapticTap } from './lib/haptic'
 import InstallPrompt from './InstallPrompt'
@@ -27,86 +40,49 @@ import TrainDetail from './TrainDetail'
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
 type View = 'timetable' | 'live' | 'map' | 'settings'
 
-function formatDelay(min: number) {
-  if (min === 0) return { text: 'On time', cls: 'delay-ontime' }
-  if (min < 0) return { text: `${Math.abs(min)}′ early`, cls: 'delay-early' }
-  return { text: `+${min}′`, cls: 'delay-late' }
-}
+/** How tightly the train list is packed. Persisted — see DENSITY_OPTIONS. */
+type Density = 'rows' | 'table' | 'cards'
 
-// Priority (1=EIP highest → 6=freight lowest). Colors chosen for at-a-glance class ID.
-const PRIORITY_CHIP: Record<number, string> = {
-  1: 'bg-amber-300 text-slate-950 border border-amber-200',
-  2: 'bg-slate-200 text-slate-900 border border-slate-100',
-  3: 'bg-orange-400 text-slate-950 border border-orange-300',
-  4: 'bg-purple-400 text-slate-950 border border-purple-300',
-  5: 'bg-slate-800 text-slate-300 border border-slate-700',
-  6: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
-}
-
-function priorityChipCls(priority: number): string {
-  return PRIORITY_CHIP[priority] ?? PRIORITY_CHIP[5]
-}
-
-function statusBadge(status: Train['status']) {
-  const map = {
-    approaching: {
-      label: 'Approaching',
-      cls: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
-    },
-    enroute: {
-      label: 'En route',
-      cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-    },
-    standing: {
-      label: 'Standing',
-      cls: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
-    },
-    scheduled: {
-      label: 'Scheduled',
-      cls: 'bg-slate-500/20 text-slate-400 border-slate-500/40',
-    },
-  }
-  return map[status]
-}
-
-const URGENCY_STYLE: Record<Urgency, { text: string; ring: string; dot: string }> = {
-  now: {
-    text: 'text-red-300',
-    ring: 'bg-red-500/15 border-red-500/40',
-    dot: 'bg-red-400 animate-pulse',
+// Traffic and station layout change how much detail is useful at a glance,
+// so the choice is the dispatcher's and it is remembered.
+const DENSITY_OPTIONS: {
+  id: Density
+  label: string
+  hint: string
+  fits: string
+}[] = [
+  {
+    id: 'rows',
+    label: 'Dense rows',
+    hint: 'Two lines per train, tap to expand the full booked route.',
+    fits: '~12 on screen',
   },
-  imminent: {
-    text: 'text-red-300',
-    ring: 'bg-red-500/10 border-red-500/30',
-    dot: 'bg-red-400',
+  {
+    id: 'table',
+    label: 'Table',
+    hint: 'One line per train. Most trains visible; details in the sheet.',
+    fits: '~20 on screen',
   },
-  soon: {
-    text: 'text-amber-300',
-    ring: 'bg-amber-500/10 border-amber-500/30',
-    dot: 'bg-amber-400',
+  {
+    id: 'cards',
+    label: 'Cards',
+    hint: 'Full detail per train, including live speed and signal.',
+    fits: '~7 on screen',
   },
-  later: {
-    text: 'text-slate-300',
-    ring: 'bg-slate-800 border-slate-700',
-    dot: 'bg-slate-500',
-  },
-  past: {
-    text: 'text-slate-500',
-    ring: 'bg-slate-800/60 border-slate-700/60',
-    dot: 'bg-slate-600',
-  },
-}
+]
 
 function TrainCard({
   train,
   nowSec,
   conflictsWith,
   onOpen,
+  onOpenNumber,
 }: {
   train: Train
   nowSec: number
   conflictsWith: string[]
   onOpen: (t: Train) => void
+  onOpenNumber: (n: string) => void
 }) {
   const dest = resolveDestination(train.toPost)
   const delay = formatDelay(train.delay)
@@ -115,6 +91,7 @@ function TrainCard({
   const etaSec = computeETASec(train, nowSec)
   const urgency = etaUrgency(etaSec)
   const eta = URGENCY_STYLE[urgency]
+  const signalBadge = SIGNAL_BADGE[train.signalState]
   const inConflict = conflictsWith.length > 0
 
   return (
@@ -140,7 +117,9 @@ function TrainCard({
     >
       <div className="p-3.5">
         <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2 min-w-0">
+          {/* Wraps rather than overlapping the ETA badge when a train carries
+              several chips (type + freight + player). */}
+          <div className="flex items-center flex-wrap gap-1.5 min-w-0">
             <span className="font-mono font-bold text-xl text-white tracking-tight">
               {train.number}
             </span>
@@ -172,14 +151,32 @@ function TrainCard({
             )}
           </div>
           <div className="text-right shrink-0">
-            <div
-              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border font-bold text-[15px] tabular-nums ${eta.ring} ${eta.text}`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${eta.dot}`} />
-              {etaLabel(etaSec)}
-            </div>
+            {/* With a timetable the ETA to this post is the headline; without
+                one, the live vital is the best we can honestly show. */}
+            {train.hasTimetable || !train.live ? (
+              <div
+                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border font-bold text-[15px] tabular-nums ${eta.ring} ${eta.text}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${eta.dot}`} />
+                {etaLabel(etaSec)}
+              </div>
+            ) : (
+              <div
+                title="Live speed — no timetable for this train yet"
+                className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border font-bold text-[15px] tabular-nums ${signalBadge.ring} ${signalBadge.text}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${signalBadge.dot}`} />
+                {train.speed > 0 ? `${train.speed} km/h` : 'Stopped'}
+              </div>
+            )}
             <div className="text-[11px] text-slate-500 mt-1">
-              {train.distance > 0
+              {train.hasTimetable
+                ? `${train.speed} km/h · ${delay.text}`
+                : train.live
+                ? train.signalDistance !== undefined
+                  ? `${formatMetres(train.signalDistance)} to signal`
+                  : 'No signal ahead'
+                : train.distance > 0
                 ? `${train.distance.toFixed(1)} km · ${delay.text}`
                 : `At station · ${delay.text}`}
             </div>
@@ -190,36 +187,74 @@ function TrainCard({
         <div className="mb-2.5">
           <div className="flex items-center gap-2">
             <span
-              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white badge-${dest.badge.toLowerCase()}`}
+              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white ${badgeClass(dest.badge)}`}
             >
               {dest.badge}
             </span>
             <div>
               <p className="text-sm font-medium text-white leading-tight">
                 → {dest.next}
+                {train.onwardLine != null && (
+                  <span className="ml-1.5 text-[11px] font-semibold text-sky-300">
+                    L{train.onwardLine}
+                  </span>
+                )}
               </p>
-              <p className="text-[11px] text-slate-400">{dest.direction}</p>
+              <p className="text-[11px] text-slate-400">
+                {train.hasTimetable && train.nextPoint
+                  ? `Now working to ${train.nextPoint}`
+                  : dest.direction}
+              </p>
             </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between text-[13px]">
-          <div className="flex items-center gap-3 text-slate-300">
-            <div>
-              <span className="text-slate-500 text-[11px]">Arr</span>
-              <span className="font-mono ml-1 tabular-nums">{train.arrival}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 text-[11px]">Dep</span>
-              <span className="font-mono ml-1 tabular-nums">{train.departure}</span>
-            </div>
-            {train.platform !== '-' && (
+          {train.live && !train.hasTimetable ? (
+            // No scheduled times to show — surface what the feed does give.
+            <div className="flex items-center gap-3 text-slate-300">
               <div>
-                <span className="text-slate-500 text-[11px]">Pl</span>
-                <span className="ml-1 font-semibold">{train.platform}</span>
+                <span className="text-slate-500 text-[11px]">Signal</span>
+                <span className="ml-1 font-semibold">
+                  {SIGNAL_LABEL[train.signalState]}
+                </span>
               </div>
-            )}
-          </div>
+              {train.signalSpeed !== undefined && (
+                <div>
+                  <span className="text-slate-500 text-[11px]">Limit</span>
+                  <span className="font-mono ml-1 tabular-nums">
+                    {train.signalSpeed}
+                  </span>
+                  <span className="text-slate-500 text-[11px]"> km/h</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 text-slate-300">
+              <div>
+                <span className="text-slate-500 text-[11px]">Arr</span>
+                <span className="font-mono ml-1 tabular-nums">{train.arrival}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 text-[11px]">Dep</span>
+                <span className="font-mono ml-1 tabular-nums">{train.departure}</span>
+              </div>
+              {train.platform !== '-' && (
+                <div>
+                  <span className="text-slate-500 text-[11px]">Pl</span>
+                  <span className="ml-1 font-semibold text-sky-300">
+                    {train.platform}
+                  </span>
+                </div>
+              )}
+              {train.live && (
+                <span
+                  title={`Signal ${SIGNAL_LABEL[train.signalState]}`}
+                  className={`w-2 h-2 rounded-full ${signalBadge.dot}`}
+                />
+              )}
+            </div>
+          )}
           <span
             className={`text-[11px] px-2 py-0.5 rounded-full border ${status.cls}`}
           >
@@ -243,7 +278,19 @@ function TrainCard({
               <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
             </svg>
             <span className="font-semibold">Platform conflict:</span>
-            <span className="font-mono">{conflictsWith.join(', ')}</span>
+            {conflictsWith.map((n) => (
+              <button
+                key={n}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  hapticTap()
+                  onOpenNumber(n)
+                }}
+                className="font-mono underline underline-offset-2 decoration-red-400/60"
+              >
+                {n}
+              </button>
+            ))}
           </div>
         )}
 
@@ -329,7 +376,10 @@ export default function App() {
   const [showStationModal, setShowStationModal] = useState(false)
   const [showServerModal, setShowServerModal] = useState(false)
   const [selectedTrain, setSelectedTrain] = useState<Train | null>(null)
-  const nowSec = useSimNow()
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
+  const [density, setDensity] = useLocalStorage<Density>('density', 'rows')
+  // Fallback clock for the mock dataset; live data uses the in-game clock.
+  const simNowSec = useSimNow()
 
   const currentStation: Station =
     STATIONS.find((s) => s.id === stationId) ?? STATIONS[0]
@@ -337,11 +387,63 @@ export default function App() {
 
   const serversState = useServers()
   const servers = serversState.data
+  // While the live server list is still loading, `servers` is the mock list,
+  // which does not cover every real server code. Honour the stored code until
+  // the real list arrives — otherwise a stored server missing from the mock
+  // briefly renders (and fetches trains for) the wrong one. Only drop back to
+  // the first server once we know the stored code really is gone.
   const currentServer: Server =
-    servers.find((s) => s.code === serverCode) ?? servers[0] ?? FALLBACK_SERVERS[0]
+    servers.find((s) => s.code === serverCode) ??
+    (serversState.loading
+      ? { code: serverCode, region: normalizeRegion(serverCode), label: serverCode.toUpperCase() }
+      : servers[0] ?? FALLBACK_SERVERS[0])
 
   const trainsState = useTrains(currentServer.code)
-  const trains = trainsState.data
+  const rawTrains = trainsState.data
+
+  // Scheduled data lives on a different host from the live feed. Join the two
+  // on train number so cards can show booked times, platform and onward route
+  // rather than telemetry alone.
+  const serverNowSec = useServerTime(currentServer.code)
+  const liveTrainNos = useMemo(
+    () => rawTrains.filter((t) => t.live).map((t) => t.number),
+    [rawTrains],
+  )
+  const { timetables, pending: timetablePending } = useTimetables(
+    currentServer.code,
+    liveTrainNos,
+  )
+
+  const allTrains = useMemo(
+    () =>
+      rawTrains.map((t) => {
+        const tt = timetables.get(t.number)
+        return tt
+          ? applyTimetable(t, tt, currentStation.name, serverNowSec)
+          : t
+      }),
+    [rawTrains, timetables, currentStation.name, serverNowSec],
+  )
+
+  // Only trains actually routed through this post. Without it the list is
+  // every train on the server, which is useless for dispatching one station.
+  const [boundaryOnly, setBoundaryOnly] = useLocalStorage<boolean>(
+    'boundaryOnly',
+    true,
+  )
+  const trains = useMemo(() => {
+    if (!boundaryOnly) return allTrains
+    return allTrains.filter((t) => {
+      // Mock trains are already scoped to the post; live ones need their
+      // timetable before we can tell, so they appear as it resolves.
+      if (!t.live) return true
+      const tt = timetables.get(t.number)
+      if (!tt || !passesPost(tt, currentStation.name)) return false
+      // Trains that have already worked past this post are no longer
+      // dispatchable here and would just crowd the list.
+      return !t.clearedPost
+    })
+  }, [allTrains, boundaryOnly, timetables, currentStation.name])
 
   const serversByRegion = useMemo(() => {
     const groups = new Map<ServerRegion, Server[]>()
@@ -353,7 +455,35 @@ export default function App() {
     return groups
   }, [servers])
 
+  // Scheduled times come from the in-game clock, which runs on its own offset
+  // from wall time — comparing them against Date.now() would skew every ETA.
+  const nowSec = serverNowSec ?? simNowSec
+  const hasLiveTimetables = timetables.size > 0
+  // Boundary filtering cannot classify a train until its timetable lands, so
+  // an empty list during that window means "still matching", not "no trains".
+  // The pending counter alone misses the first render, before the fetch
+  // effect has run.
+  const matchingInProgress =
+    timetablePending > 0 ||
+    (boundaryOnly && liveTrainNos.length > 0 && timetables.size === 0)
+
   const conflicts = useMemo(() => detectConflicts(trains), [trains])
+
+  // Conflicts are a property of the railway, not of the current filter, so
+  // they are detected across every train at this post. That means a listed
+  // train can name a partner the category filter or search is hiding — so the
+  // number is a tap target that opens it regardless of what is on screen.
+  const trainsByNumber = useMemo(
+    () => new Map(trains.map((t) => [t.number, t])),
+    [trains],
+  )
+  const openTrainByNumber = useCallback(
+    (n: string) => {
+      const t = trainsByNumber.get(n)
+      if (t) setSelectedTrain(t)
+    },
+    [trainsByNumber],
+  )
   const conflictPairs = useMemo(() => {
     const seen = new Set<string>()
     for (const [a, arr] of conflicts) {
@@ -593,8 +723,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Legend for multi-post stations */}
-      {currentStation.multiPost && (
+      {/* Legend for multi-post stations. Redundant once real timetables are
+          in — each row names its onward point and line — and the space is
+          better spent on another train. */}
+      {currentStation.multiPost && !hasLiveTimetables && (
         <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-800 text-[11px]">
           <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">
             <span className="text-slate-400 font-medium">Posts mapped:</span>
@@ -620,21 +752,37 @@ export default function App() {
       {/* End sticky stack */}
 
       {view === 'timetable' && (
-        <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5 pb-24">
+        <main
+          className={`flex-1 overflow-y-auto pb-24 ${
+            density === 'cards' ? 'px-3 py-3 space-y-2.5' : ''
+          }`}
+        >
           {filteredTrains.length === 0 ? (
             <div className="text-center py-16 text-slate-500 space-y-3">
-              <p className="text-sm">No trains match the current filter</p>
-              <button
-                onClick={() => {
-                  setCurrentFilter('all')
-                  setSearchQuery('')
-                }}
-                className="text-xs font-medium px-3 py-1.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/40"
-              >
-                Clear filter
-              </button>
+              <p className="text-sm">
+                {matchingInProgress
+                  ? 'Matching trains to this post…'
+                  : 'No trains match the current filter'}
+              </p>
+              {matchingInProgress ? (
+                <p className="text-xs text-slate-600">
+                  {timetablePending} timetable
+                  {timetablePending === 1 ? '' : 's'} still loading
+                </p>
+              ) : (
+                <button
+                  onClick={() => {
+                    setCurrentFilter('all')
+                    setSearchQuery('')
+                    setBoundaryOnly(false)
+                  }}
+                  className="text-xs font-medium px-3 py-1.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/40"
+                >
+                  Clear filter
+                </button>
+              )}
             </div>
-          ) : (
+          ) : density === 'cards' ? (
             filteredTrains.map((t) => (
               <TrainCard
                 key={t.number}
@@ -642,16 +790,134 @@ export default function App() {
                 nowSec={nowSec}
                 conflictsWith={conflicts.get(t.number) ?? []}
                 onOpen={setSelectedTrain}
+                onOpenNumber={openTrainByNumber}
               />
             ))
+          ) : density === 'table' ? (
+            <TrainTable
+              trains={filteredTrains}
+              conflicts={conflicts}
+              onOpen={setSelectedTrain}
+            />
+          ) : (
+            <ul>
+              {filteredTrains.map((t) => (
+                <TrainRow
+                  key={t.number}
+                  train={t}
+                  nowSec={nowSec}
+                  conflictsWith={conflicts.get(t.number) ?? []}
+                  expanded={expandedRow === t.number}
+                  onToggle={(n) =>
+                    setExpandedRow((cur) => (cur === n ? null : n))
+                  }
+                  onOpen={setSelectedTrain}
+                  onOpenNumber={openTrainByNumber}
+                />
+              ))}
+            </ul>
           )}
         </main>
       )}
 
-      {view !== 'timetable' && (
+      {view === 'settings' && (
+        <main className="flex-1 overflow-y-auto px-4 py-4 pb-28 space-y-5">
+          <section>
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              List density
+            </h2>
+            <div className="space-y-2">
+              {DENSITY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => {
+                    hapticTap()
+                    setDensity(opt.id)
+                  }}
+                  className={`w-full text-left px-3 py-2.5 rounded-xl border transition-colors ${
+                    density === opt.id
+                      ? 'bg-sky-500/15 border-sky-500/50'
+                      : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`text-sm font-semibold ${
+                        density === opt.id ? 'text-sky-300' : 'text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {opt.fits}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{opt.hint}</p>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              Scope
+            </h2>
+            <button
+              onClick={() => {
+                hapticTap()
+                setBoundaryOnly(!boundaryOnly)
+              }}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800"
+            >
+              <span className="text-left">
+                <span className="block text-sm font-semibold text-white">
+                  This post only
+                </span>
+                <span className="block text-[11px] text-slate-400 mt-0.5">
+                  Show only trains routed through {currentStation.name}
+                </span>
+              </span>
+              <span
+                className={`w-11 h-6 rounded-full p-0.5 shrink-0 transition-colors ${
+                  boundaryOnly ? 'bg-sky-500' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`block w-5 h-5 rounded-full bg-white transition-transform ${
+                    boundaryOnly ? 'translate-x-5' : ''
+                  }`}
+                />
+              </span>
+            </button>
+          </section>
+
+          <section className="text-[11px] text-slate-500 space-y-1">
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+              Data
+            </h2>
+            <p>
+              Server clock:{' '}
+              <span className="font-mono text-slate-300">
+                {serverNowSec === null
+                  ? 'syncing…'
+                  : `${String(Math.floor(serverNowSec / 3600)).padStart(2, '0')}:${String(
+                      Math.floor(serverNowSec / 60) % 60,
+                    ).padStart(2, '0')}`}
+              </span>
+            </p>
+            <p>
+              Timetables cached:{' '}
+              <span className="font-mono text-slate-300">{timetables.size}</span>
+              {timetablePending > 0 && ` · ${timetablePending} loading`}
+            </p>
+          </section>
+        </main>
+      )}
+
+      {(view === 'live' || view === 'map') && (
         <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center pb-32">
           <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4 text-2xl">
-            {view === 'live' ? '📡' : view === 'map' ? '🗺' : '⚙'}
+            {view === 'live' ? '📡' : '🗺'}
           </div>
           <h2 className="text-lg font-semibold text-white capitalize mb-1">
             {view}
