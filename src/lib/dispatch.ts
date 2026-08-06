@@ -71,6 +71,52 @@ export function etaLabel(sec: number): string {
   return `in ${m}m`
 }
 
+// Platform sentinels that don't participate in conflict detection
+// (freight sidings / unassigned).
+const NON_CONFLICT_PLATFORMS = new Set(['-', 'Tow.', ''])
+
+/**
+ * Occupation window for a train: [arrival+delay, departure+delay] in sec-of-day.
+ */
+export function trainWindowSec(train: Train): [number, number] {
+  const arr = hhmmToSec(train.arrival) + train.delay * 60
+  const dep = hhmmToSec(train.departure) + train.delay * 60
+  return [arr, dep]
+}
+
+export type ConflictMap = Map<string, string[]>
+
+/**
+ * For each pair of trains sharing a platform with overlapping windows,
+ * record the conflict. Returns train.number → conflicting train numbers.
+ */
+export function detectConflicts(trains: Train[]): ConflictMap {
+  const byPlatform = new Map<string, Train[]>()
+  for (const t of trains) {
+    if (NON_CONFLICT_PLATFORMS.has(t.platform)) continue
+    const list = byPlatform.get(t.platform) ?? []
+    list.push(t)
+    byPlatform.set(t.platform, list)
+  }
+  const conflicts: ConflictMap = new Map()
+  for (const list of byPlatform.values()) {
+    if (list.length < 2) continue
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const [a1, a2] = trainWindowSec(list[i])
+        const [b1, b2] = trainWindowSec(list[j])
+        if (a1 < b2 && b1 < a2) {
+          const na = list[i].number
+          const nb = list[j].number
+          conflicts.set(na, [...(conflicts.get(na) ?? []), nb])
+          conflicts.set(nb, [...(conflicts.get(nb) ?? []), na])
+        }
+      }
+    }
+  }
+  return conflicts
+}
+
 /**
  * Sort trains for dispatcher: future ETA ascending (nearest first),
  * past pushed to bottom (ascending by past distance).
