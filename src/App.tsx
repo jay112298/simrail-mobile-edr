@@ -1,15 +1,15 @@
 import { useState, useMemo } from 'react'
 import {
   REGION_LABEL,
-  SERVERS,
+  SERVERS as FALLBACK_SERVERS,
   STATIONS,
   resolveDestination,
-  trainsForServer,
   type Server,
   type ServerRegion,
   type Station,
   type Train,
 } from './data'
+import { useServers, useTrains } from './lib/useLive'
 import {
   computeETASec,
   detectConflicts,
@@ -324,7 +324,7 @@ export default function App() {
   const [stationId, setStationId] = useLocalStorage<string>('station', STATIONS[0].id)
   const [currentFilter, setCurrentFilter] = useLocalStorage<Filter>('filter', 'all')
   const [view, setView] = useLocalStorage<View>('view', 'timetable')
-  const [serverCode, setServerCode] = useLocalStorage<string>('server', SERVERS[0].code)
+  const [serverCode, setServerCode] = useLocalStorage<string>('server', FALLBACK_SERVERS[0].code)
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
   const [showServerModal, setShowServerModal] = useState(false)
@@ -335,24 +335,23 @@ export default function App() {
     STATIONS.find((s) => s.id === stationId) ?? STATIONS[0]
   const setCurrentStation = (s: Station) => setStationId(s.id)
 
+  const serversState = useServers()
+  const servers = serversState.data
   const currentServer: Server =
-    SERVERS.find((s) => s.code === serverCode) ?? SERVERS[0]
+    servers.find((s) => s.code === serverCode) ?? servers[0] ?? FALLBACK_SERVERS[0]
 
-  // Per-server train list. Phase 4 will swap this for a live fetch.
-  const trains = useMemo(
-    () => trainsForServer(currentServer.code),
-    [currentServer.code],
-  )
+  const trainsState = useTrains(currentServer.code)
+  const trains = trainsState.data
 
   const serversByRegion = useMemo(() => {
     const groups = new Map<ServerRegion, Server[]>()
-    for (const s of SERVERS) {
+    for (const s of servers) {
       const list = groups.get(s.region) ?? []
       list.push(s)
       groups.set(s.region, list)
     }
     return groups
-  }, [])
+  }, [servers])
 
   const conflicts = useMemo(() => detectConflicts(trains), [trains])
   const conflictPairs = useMemo(() => {
@@ -453,7 +452,22 @@ export default function App() {
             aria-label={`Server: ${currentServer.label}. Tap to change.`}
             className="text-xs bg-slate-800 px-2.5 py-1.5 rounded-full border border-slate-700 flex items-center gap-1.5 active:scale-95 transition-transform"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span
+              title={
+                trainsState.error
+                  ? `Live feed error: ${trainsState.error}`
+                  : trainsState.loading
+                  ? 'Fetching live data...'
+                  : 'Live'
+              }
+              className={`w-1.5 h-1.5 rounded-full ${
+                trainsState.error
+                  ? 'bg-red-400'
+                  : trainsState.loading
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-green-400 animate-pulse'
+              }`}
+            />
             <span className="font-semibold uppercase">{currentServer.code}</span>
             <svg
               xmlns="http://www.w3.org/2000/svg"
