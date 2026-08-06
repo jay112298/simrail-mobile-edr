@@ -19,6 +19,7 @@ import InstallPrompt from './InstallPrompt'
 import TrainDetail from './TrainDetail'
 
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
+type View = 'timetable' | 'live' | 'map' | 'settings'
 
 function formatDelay(min: number) {
   if (min === 0) return { text: 'On time', cls: 'delay-ontime' }
@@ -239,12 +240,66 @@ function TrainCard({
   )
 }
 
+const NAV_ITEMS: { id: View; label: string }[] = [
+  { id: 'timetable', label: 'Timetable' },
+  { id: 'live', label: 'Live' },
+  { id: 'map', label: 'Map' },
+  { id: 'settings', label: 'Settings' },
+]
+
+function NavIcon({ id }: { id: View }) {
+  const common = {
+    xmlns: 'http://www.w3.org/2000/svg',
+    width: 20,
+    height: 20,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+  }
+  if (id === 'timetable')
+    return (
+      <svg {...common}>
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M3 9h18" />
+        <path d="M9 21V9" />
+      </svg>
+    )
+  if (id === 'live')
+    return (
+      <svg {...common}>
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </svg>
+    )
+  if (id === 'map')
+    return (
+      <svg {...common}>
+        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+        <circle cx="12" cy="10" r="3" />
+      </svg>
+    )
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [currentStation, setCurrentStation] = useState<Station>(STATIONS[0])
   const [currentFilter, setCurrentFilter] = useState<Filter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
   const [selectedTrain, setSelectedTrain] = useState<Train | null>(null)
+  const [view, setView] = useState<View>('timetable')
   const nowSec = useSimNow()
 
   const conflicts = useMemo(() => detectConflicts(TRAINS), [])
@@ -351,6 +406,8 @@ export default function App() {
         </button>
       </header>
 
+      {view === 'timetable' && (
+        <>
       {/* Filters */}
       <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 sticky top-[108px] z-20">
         <div className="flex gap-2 overflow-x-auto scroll-hide pb-0.5">
@@ -454,80 +511,45 @@ export default function App() {
           ))
         )}
       </main>
+        </>
+      )}
+
+      {view !== 'timetable' && (
+        <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center pb-32">
+          <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4 text-2xl">
+            {view === 'live' ? '📡' : view === 'map' ? '🗺' : '⚙'}
+          </div>
+          <h2 className="text-lg font-semibold text-white capitalize mb-1">
+            {view}
+          </h2>
+          <p className="text-sm text-slate-400 max-w-xs">
+            Coming in a later phase. Timetable is the working view for now.
+          </p>
+        </main>
+      )}
 
       {/* Install prompt for PWA */}
       <InstallPrompt />
 
       {/* Bottom nav */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-4 py-2.5 safe-bottom z-30">
-        <div className="flex items-center justify-around text-[10px] text-slate-400">
-          <button className="flex flex-col items-center gap-0.5 text-sky-400">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <rect width="18" height="18" x="3" y="3" rx="2" />
-              <path d="M3 9h18" />
-              <path d="M9 21V9" />
-            </svg>
-            <span>Timetable</span>
-          </button>
-          <button className="flex flex-col items-center gap-0.5">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M12 2v4" />
-              <path d="m16.2 7.8 2.9-2.9" />
-              <path d="M18 12h4" />
-              <path d="m16.2 16.2 2.9 2.9" />
-              <path d="M12 18v4" />
-              <path d="m4.9 19.1 2.9-2.9" />
-              <path d="M2 12h4" />
-              <path d="m4.9 4.9 2.9 2.9" />
-            </svg>
-            <span>Live</span>
-          </button>
-          <button className="flex flex-col items-center gap-0.5">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
-              <circle cx="12" cy="10" r="3" />
-            </svg>
-            <span>Map</span>
-          </button>
-          <button className="flex flex-col items-center gap-0.5">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
-            </svg>
-            <span>Settings</span>
-          </button>
+        <div className="flex items-center justify-around text-[10px]">
+          {NAV_ITEMS.map((item) => {
+            const active = view === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => setView(item.id)}
+                aria-current={active ? 'page' : undefined}
+                className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg transition-colors ${
+                  active ? 'text-sky-400' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <NavIcon id={item.id} />
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
         </div>
       </nav>
 
