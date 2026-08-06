@@ -1,8 +1,12 @@
 import { useState, useMemo } from 'react'
 import {
+  REGION_LABEL,
+  SERVERS,
   STATIONS,
   TRAINS,
   resolveDestination,
+  type Server,
+  type ServerRegion,
   type Station,
   type Train,
 } from './data'
@@ -320,14 +324,29 @@ export default function App() {
   const [stationId, setStationId] = useLocalStorage<string>('station', STATIONS[0].id)
   const [currentFilter, setCurrentFilter] = useLocalStorage<Filter>('filter', 'all')
   const [view, setView] = useLocalStorage<View>('view', 'timetable')
+  const [serverCode, setServerCode] = useLocalStorage<string>('server', SERVERS[0].code)
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
+  const [showServerModal, setShowServerModal] = useState(false)
   const [selectedTrain, setSelectedTrain] = useState<Train | null>(null)
   const nowSec = useSimNow()
 
   const currentStation: Station =
     STATIONS.find((s) => s.id === stationId) ?? STATIONS[0]
   const setCurrentStation = (s: Station) => setStationId(s.id)
+
+  const currentServer: Server =
+    SERVERS.find((s) => s.code === serverCode) ?? SERVERS[0]
+
+  const serversByRegion = useMemo(() => {
+    const groups = new Map<ServerRegion, Server[]>()
+    for (const s of SERVERS) {
+      const list = groups.get(s.region) ?? []
+      list.push(s)
+      groups.set(s.region, list)
+    }
+    return groups
+  }, [])
 
   const conflicts = useMemo(() => detectConflicts(TRAINS), [])
   const conflictPairs = useMemo(() => {
@@ -420,9 +439,28 @@ export default function App() {
               </p>
             </div>
           </div>
-          <button className="text-xs bg-slate-800 px-2.5 py-1.5 rounded-full border border-slate-700 flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              hapticTap()
+              setShowServerModal(true)
+            }}
+            aria-label={`Server: ${currentServer.label}. Tap to change.`}
+            className="text-xs bg-slate-800 px-2.5 py-1.5 rounded-full border border-slate-700 flex items-center gap-1.5 active:scale-95 transition-transform"
+          >
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            <span>PL1</span>
+            <span className="font-semibold uppercase">{currentServer.code}</span>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="text-slate-400"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
           </button>
         </div>
 
@@ -693,6 +731,64 @@ export default function App() {
                     <span className="text-sky-400 text-sm">✓</span>
                   )}
                 </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Server Modal */}
+      {showServerModal && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/70"
+            onClick={() => setShowServerModal(false)}
+          />
+          <div className="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-slate-900 rounded-t-2xl border-t border-slate-700 max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold">Select Server</h2>
+                <p className="text-[11px] text-slate-400">
+                  Timetables and dispatch state are per-server.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowServerModal(false)}
+                className="text-slate-400 p-1 text-lg"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="overflow-y-auto p-3 space-y-4">
+              {Array.from(serversByRegion.entries()).map(([region, list]) => (
+                <div key={region}>
+                  <p className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold px-1 mb-1.5">
+                    {REGION_LABEL[region]}
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {list.map((s) => {
+                      const active = s.code === currentServer.code
+                      return (
+                        <button
+                          key={s.code}
+                          onClick={() => {
+                            hapticTap()
+                            setServerCode(s.code)
+                            setShowServerModal(false)
+                          }}
+                          className={`px-2 py-3 rounded-xl text-center font-mono font-bold uppercase text-sm ${
+                            active
+                              ? 'bg-sky-500/15 border border-sky-500/40 text-sky-300'
+                              : 'bg-slate-800 border border-slate-700 text-slate-200 hover:border-slate-600'
+                          }`}
+                        >
+                          {s.code}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
