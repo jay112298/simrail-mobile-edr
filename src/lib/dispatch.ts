@@ -7,9 +7,23 @@ const MOCK_ANCHOR_SEC = 8 * 3600
 
 const SECONDS_IN_DAY = 24 * 3600
 
-export function hhmmToSec(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number)
-  return h * 3600 + m * 60
+const HHMM = /^(\d{1,2}):(\d{2})$/
+
+/**
+ * Parse "HH:MM" into seconds-of-day.
+ *
+ * Returns null for anything that is not a real time — notably the "--:--"
+ * sentinel that live API trains carry until the timetable feed lands.
+ * Callers must treat null as "no timetable", not as zero: coercing it to a
+ * number is what produced NaN ETAs on every live card.
+ */
+export function hhmmToSec(hhmm: string): number | null {
+  const m = HHMM.exec(hhmm.trim())
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 23 || min > 59) return null
+  return h * 3600 + min * 60
 }
 
 /**
@@ -32,20 +46,22 @@ export function useSimNow(): number {
  * Seconds until the actionable moment for this train.
  * - standing: seconds to departure (dispatcher waits for slot to clear)
  * - else: seconds to arrival + delay
- * Negative = in the past.
+ * Negative = in the past. Null when the train has no timetable.
  */
-export function computeETASec(train: Train, nowSec: number): number {
+export function computeETASec(train: Train, nowSec: number): number | null {
   const target =
     train.status === 'standing'
       ? hhmmToSec(train.departure)
       : hhmmToSec(train.arrival)
+  if (target === null) return null
   const withDelay = target + train.delay * 60
   return withDelay - nowSec
 }
 
-export type Urgency = 'past' | 'now' | 'imminent' | 'soon' | 'later'
+export type Urgency = 'past' | 'now' | 'imminent' | 'soon' | 'later' | 'unknown'
 
-export function etaUrgency(sec: number): Urgency {
+export function etaUrgency(sec: number | null): Urgency {
+  if (sec === null) return 'unknown'
   if (sec < -30) return 'past'
   if (sec <= 30) return 'now'
   if (sec <= 120) return 'imminent'
@@ -56,7 +72,8 @@ export function etaUrgency(sec: number): Urgency {
 /**
  * Human label for ETA. Format tuned for at-a-glance dispatch scan.
  */
-export function etaLabel(sec: number): string {
+export function etaLabel(sec: number | null): string {
+  if (sec === null) return '—'
   const abs = Math.abs(sec)
   const m = Math.floor(abs / 60)
   const s = abs % 60
@@ -77,11 +94,13 @@ const NON_CONFLICT_PLATFORMS = new Set(['-', 'Tow.', ''])
 
 /**
  * Occupation window for a train: [arrival+delay, departure+delay] in sec-of-day.
+ * Null when the train has no timetable to derive a window from.
  */
-export function trainWindowSec(train: Train): [number, number] {
-  const arr = hhmmToSec(train.arrival) + train.delay * 60
-  const dep = hhmmToSec(train.departure) + train.delay * 60
-  return [arr, dep]
+export function trainWindowSec(train: Train): [number, number] | null {
+  const arr = hhmmToSec(train.arrival)
+  const dep = hhmmToSec(train.departure)
+  if (arr === null || dep === null) return null
+  return [arr + train.delay * 60, dep + train.delay * 60]
 }
 
 export type ConflictMap = Map<string, string[]>
@@ -103,8 +122,12 @@ export function detectConflicts(trains: Train[]): ConflictMap {
     if (list.length < 2) continue
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
-        const [a1, a2] = trainWindowSec(list[i])
-        const [b1, b2] = trainWindowSec(list[j])
+        const wa = trainWindowSec(list[i])
+        const wb = trainWindowSec(list[j])
+        // No timetable → no occupation window → nothing to overlap.
+        if (!wa || !wb) continue
+        const [a1, a2] = wa
+        const [b1, b2] = wb
         if (a1 < b2 && b1 < a2) {
           const na = list[i].number
           const nb = list[j].number
@@ -121,11 +144,19 @@ export function detectConflicts(trains: Train[]): ConflictMap {
  * Sort trains for dispatcher: future ETA ascending (nearest first),
  * past pushed to bottom (ascending by past distance).
  * Tiebreak by priority (lower number = higher class).
+ *
+ * Trains with no timetable sort below every scheduled train, by class then
+ * number — otherwise a null ETA would make the comparator inconsistent and
+ * leave the whole list in arbitrary feed order.
  */
 export function sortByETA(trains: Train[], nowSec: number): Train[] {
   return [...trains].sort((a, b) => {
     const ea = computeETASec(a, nowSec)
     const eb = computeETASec(b, nowSec)
+    if (ea === null || eb === null) {
+      if (ea !== eb) return ea === null ? 1 : -1
+      return a.priority - b.priority || a.number.localeCompare(b.number)
+    }
     const aPast = ea < -30
     const bPast = eb < -30
     if (aPast !== bPast) return aPast ? 1 : -1

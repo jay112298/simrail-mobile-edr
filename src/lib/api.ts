@@ -65,14 +65,16 @@ async function fetchJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 
 // --- Servers -----------------------------------------------------------
 
-function normalizeRegion(code: string): ServerRegion {
-  const prefix = code.slice(0, 2).toLowerCase()
-  if (prefix === 'pl') return 'PL'
-  if (prefix === 'de') return 'DE'
-  if (prefix === 'fr') return 'FR'
-  if (prefix === 'cz') return 'CS'
-  if (prefix === 'en') return 'EN'
-  return 'PL'
+// Server codes seen live: pl1-5, de1-3, fr1, cz1, int1-9, xbx1-3.
+// The international and Xbox servers are English-speaking, so they belong
+// under EN — matching them on a two-letter prefix filed them under PL.
+export function normalizeRegion(code: string): ServerRegion {
+  const c = code.toLowerCase()
+  if (c.startsWith('pl')) return 'PL'
+  if (c.startsWith('de')) return 'DE'
+  if (c.startsWith('fr')) return 'FR'
+  if (c.startsWith('cz')) return 'CS'
+  return 'EN'
 }
 
 function mapServer(s: ApiServer): Server {
@@ -139,13 +141,24 @@ function classifyTrain(name: string, trainNo: string): { type: string; priority:
   return { type: 'R', priority: 5, category: 'passenger' }
 }
 
+// 32767 is SimRail's "no restriction" sentinel, not a real speed limit.
+const SIGNAL_UNRESTRICTED = 32767
+
 function mapTrain(t: ApiTrain): Train {
   const cls = classifyTrain(t.TrainName, t.TrainNoLocal)
   const driver: Driver = t.Type === 'user' ? 'player' : 'bot'
   const velocity = Math.max(0, Math.round(t.TrainData.Velocity))
+  const toSignal = t.TrainData.DistanceToSignalInFront
+  const signalLimit = t.TrainData.SignalInFrontSpeed
+  // A null SignalInFront means the feed has no signal ahead for this train;
+  // it zeroes the speed and distance fields too. Reading that zero as a
+  // speed limit would flag a moving train as held at a red.
+  const hasSignal = t.TrainData.SignalInFront !== null
 
-  // /trains-open exposes only live telemetry — no scheduled arr/dep or
-  // platform. Fill with sentinels until the timetable proxy lands.
+  // /trains-open carries live telemetry only — no scheduled arr/dep, no
+  // platform, no consist weights. Those stay sentinels until the timetable
+  // proxy lands; `live: true` tells the UI to render telemetry rather than
+  // a timetable it does not have.
   return {
     number: t.TrainNoLocal,
     type: cls.type,
@@ -164,9 +177,21 @@ function mapTrain(t: ApiTrain): Train {
     length: 0,
     weight: 0,
     speed: velocity,
-    maxSpeed: velocity > 0 ? Math.max(velocity, 120) : 120,
-    signalState: signalState(t.TrainData.SignalInFrontSpeed),
+    maxSpeed: 0,
+    signalState: hasSignal ? signalState(signalLimit) : 'unknown',
     stops: [],
+
+    live: true,
+    timetableIndex: t.TrainData.VDDelayedTimetableIndex,
+    signalDistance:
+      hasSignal && Number.isFinite(toSignal)
+        ? Math.max(0, Math.round(toSignal))
+        : undefined,
+    signalSpeed:
+      hasSignal && signalLimit > 0 && signalLimit < SIGNAL_UNRESTRICTED
+        ? signalLimit
+        : undefined,
+    vehicles: t.Vehicles,
   }
 }
 
@@ -176,9 +201,18 @@ function signalState(speedLimit: number): Train['signalState'] {
   //   32767    → clear / unknown ahead
   //   >0 < max → yellow (restrictive)
   if (speedLimit === 0) return 'red'
-  if (speedLimit >= 32767) return 'green'
+  if (speedLimit >= SIGNAL_UNRESTRICTED) return 'green'
   if (speedLimit > 0) return 'yellow'
   return 'unknown'
+}
+
+/**
+ * SimRail vehicle ids look like "201E/ET22-836:R" or
+ * "Pendolino/ED250-001 Variant". Pull out the recognisable stock name.
+ */
+export function vehicleName(raw: string): string {
+  const afterSlash = raw.includes('/') ? raw.slice(raw.indexOf('/') + 1) : raw
+  return afterSlash.split(':')[0].replace(/\s+Variant$/i, '').trim()
 }
 
 export async function fetchTrains(

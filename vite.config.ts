@@ -4,6 +4,20 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  // The timetable host sends no CORS headers, so a browser cannot call it
+  // directly. In the packaged Android app CapacitorHttp goes through native
+  // HTTP where CORS does not apply; this proxy is the dev-server equivalent
+  // so the same code path can be built and debugged in a browser.
+  server: {
+    proxy: {
+      '/simrail-timetable': {
+        target: 'https://api1.aws.simrail.eu:8082',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/simrail-timetable/, '/api'),
+      },
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

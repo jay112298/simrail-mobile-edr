@@ -56,9 +56,36 @@ export type Train = {
   length: number
   weight: number
   speed: number
+  /** Permitted maximum. 0 when unknown (live feed carries no consist data). */
   maxSpeed: number
   signalState: SignalState
   stops: Stop[]
+
+  // --- Live telemetry. Present only on trains sourced from the panel API,
+  // which reports position and signalling but no timetable. ---
+
+  /** True when this record came from the live API (has position/signal telemetry). */
+  live?: boolean
+  /** True once a timetable has been merged in, making arr/dep/platform real. */
+  hasTimetable?: boolean
+  /** Index of the stop the train is currently working towards. */
+  timetableIndex?: number
+  /** Next timetable point ahead of the train, wherever it is on its run. */
+  nextPoint?: string
+  /** Point the train is routed to after leaving the current dispatch post. */
+  onwardPoint?: string
+  /** Line number the train departs the current post onto. */
+  onwardLine?: number | null
+  /** Track within the platform at the current post. */
+  track?: number | null
+  /** True once the train has worked past the last point this post controls. */
+  clearedPost?: boolean
+  /** Metres to the next signal ahead. */
+  signalDistance?: number
+  /** Speed permitted at the next signal, km/h. Undefined when unrestricted. */
+  signalSpeed?: number
+  /** Raw SimRail vehicle ids, locomotive first. */
+  vehicles?: string[]
 }
 
 export type DestinationInfo = {
@@ -304,11 +331,22 @@ export function resolveDestination(toPost: string): DestinationInfo {
   return (
     POST_DESTINATION_MAP[toPost] || {
       next: toPost,
-      direction: toPost,
+      // Live trains carry their final station here rather than a mapped
+      // dispatch post, so label it instead of repeating the name.
+      direction: 'Destination',
       color: 'dest-other',
-      badge: '?',
+      badge: toPost.trim().charAt(0).toUpperCase() || '?',
     }
   )
+}
+
+// Only P / S / M have a dedicated badge colour in index.css; anything else
+// (live destinations) falls back to a neutral chip.
+const BADGE_CLASSES = new Set(['p', 's', 'm'])
+
+export function badgeClass(badge: string): string {
+  const key = badge.toLowerCase()
+  return BADGE_CLASSES.has(key) ? `badge-${key}` : 'badge-other'
 }
 
 // Realistic mock trains for Skierniewice dispatch window ~08:00–09:30.

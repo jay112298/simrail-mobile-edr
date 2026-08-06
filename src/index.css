@@ -34,6 +34,7 @@ body {
 .badge-p { background: #3b82f6; }
 .badge-s { background: #8b5cf6; }
 .badge-m { background: #ec4899; }
+.badge-other { background: #475569; }
 
 .dest-plycwia { border-left-color: #22c55e; }
 .dest-zyrardow { border-left-color: #38bdf8; }

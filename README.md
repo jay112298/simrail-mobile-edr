@@ -1,65 +1,131 @@
-# SimRail Mobile EDR (React + PWA)
+# SimRail Mobile EDR
 
-Phone-first Electronic Dispatch Record for SimRail.  
-**Installable on your phone** as a Progressive Web App.
+Phone-first Electronic Dispatch Record for [SimRail](https://simrail.eu). Built to
+replace squinting at the in-game timetable: it shows the trains inside your
+dispatch boundary, when they are booked through, which platform and track they
+take, and where they are routed next.
 
-## What's improved
+Ships as a **native Android APK** — no server, no hosting, no browser needed.
 
-- Custom railway-themed app icon (192 / 512 / Apple touch)
-- Proper web app manifest + maskable icons
-- Install banner that appears when the browser allows installation
-- Better iOS / Android meta tags (status bar, standalone mode)
-- No white flash on load
-- Offline-capable service worker (via Vite PWA plugin)
-- Safe-area support for notched phones
+---
 
-## Quick Start
+## Download
+
+**[⬇ Download the Android APK](dist-apk/simrail-edr.apk?raw=1)**
+
+Open this page on your phone and tap the link above. Android will warn about
+installing outside the Play Store — allow it for your browser, then install.
+
+The build is a **debug-signed APK**. It installs fine alongside anything else,
+but it is not Play Store signed, so Android shows the usual unknown-source
+prompt.
+
+---
+
+## What it does
+
+- **Boundary filtering** — only trains actually routed through your post, using
+  the timetable's `supervisedBy` field. A busy station is a dozen trains, not
+  the ~150 running server-wide.
+- **Real booked times** — arrival and departure at *your* post, platform and
+  track, and the onward point plus line number.
+- **Live telemetry** — current speed, signal aspect, and distance to the next
+  signal, polled every 15 s.
+- **Real delay** — computed against the in-game clock, not wall time.
+- **Platform conflict detection** — overlapping occupation windows on the same
+  platform are flagged on both trains.
+- **Three list densities** — switchable in Settings and remembered, because a
+  quiet station and a rush-hour station want different things:
+
+  | Density | Trains on screen | Use when |
+  |---|---|---|
+  | Dense rows | ~12 | Default. Tap a row to expand its full booked route. |
+  | Table | ~20 | Heavy traffic — maximum trains visible at once. |
+  | Cards | ~7 | Quiet periods, or when you want live vitals per train. |
+
+---
+
+## Build from source
+
+Requires Node 20+, and for the APK, Android Studio (for its bundled JDK 21 and
+the Android SDK).
 
 ```bash
-cd /home/workdir/artifacts/simrail-mobile-edr
 npm install
-npm run dev -- --host
 ```
 
-The `--host` flag is important so your phone can reach the app on the same Wi-Fi.
+### Run in a browser (development)
 
-### Install on Android (Chrome)
+```bash
+npm run dev
+```
 
-1. Open the URL shown by Vite on your phone
-2. You should see an **Install Mobile EDR** banner near the bottom
-3. Tap **Install**  
-   (or use Chrome menu → Install app / Add to Home screen)
+### Build the APK
 
-### Install on iOS (Safari)
+```bash
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+npm run apk
+```
 
-1. Open the URL in Safari
-2. Tap the Share button
-3. Choose **Add to Home Screen**
-4. Confirm
+The APK lands at `android/app/build/outputs/apk/debug/app-debug.apk` and is
+copied to `dist-apk/simrail-edr.apk` for download.
 
-Once installed it opens fullscreen without the browser chrome.
+System Java 11 is too old for the Android Gradle Plugin — hence the `JAVA_HOME`
+pointing at Android Studio's bundled runtime.
 
-## Features
+---
 
-- Clean mobile UI, no overflow
-- **Skierniewice P / S / M → real destinations** (Płyćwia, Platforms, Koluszki/Żyrardów)
-- Color-coded directions
-- Filters + search
-- Dark theme for night dispatching
+## Why native, and not just a PWA
 
-## Project structure
+SimRail exposes two APIs:
+
+| Host | Contents | Browser-reachable |
+|---|---|---|
+| `panel.simrail.eu:8084` | live positions, speed, signals | yes (reflects `Origin`) |
+| `api1.aws.simrail.eu:8082` | timetables, server clock | **no — sends no CORS headers at all** |
+
+The timetable host is what makes this a dispatch tool rather than a train
+tracker, and no browser can reach it. Capacitor routes `fetch` through native
+Java HTTP, where CORS does not apply, so the packaged app reads it directly and
+needs no proxy of any kind.
+
+For browser development, `vite.config.ts` proxies the same paths so the code
+path is identical in both environments.
+
+### Timetable fetching
+
+`getAllTimetables` for a whole server is ~21 MB uncompressed, takes 35–70 s, and
+the host ignores `Accept-Encoding`. Unusable on a phone. Per-train queries are
+~10 KB, so the app fetches those with a bounded worker pool and caches them in
+IndexedDB — timetables do not change during a server session, so later starts
+are effectively instant.
+
+---
+
+## Architecture
 
 ```
 src/
-  App.tsx            # Main UI
-  InstallPrompt.tsx  # PWA install banner
-  data.ts            # Stations + post→destination mapping
-  index.css
-public/
-  pwa-192.png / pwa-512.png / apple-touch-icon.png
-  icon.svg
+  App.tsx              root: filters, densities, boundary scope, settings
+  TrainViews.tsx       dense-row and table renderings
+  TrainDetail.tsx      bottom-sheet route + vitals
+  data.ts              types, stations, mock fallback
+  lib/
+    api.ts             panel API (live positions/signals)
+    timetable.ts       timetable API + IndexedDB-cached per-train fetch
+    useTimetable.ts    server clock + progressive timetable resolution
+    enrich.ts          joins live telemetry to booked schedule
+    dispatch.ts        ETA, conflict detection, sorting
+    ui.ts              shared presentation helpers
 ```
 
-## Feedback
+### Notes on the data
 
-After testing on your phone, tell me what you want improved (layout, missing info, more stations, live data, etc.).
+- The in-game clock runs on its own offset from wall time (observed several
+  hours behind). All scheduled comparisons use `/getTime`, never `Date.now()`.
+- A dispatch post controls a *run* of points, not one. Skierniewice covers
+  `Skierniewice M PZS` → `Skierniewice` → `Skierniewice P PZS`; the occupation
+  window spans entry arrival to exit departure.
+- `SignalInFront: null` means no signal data, and the feed zeroes the speed and
+  distance fields alongside it. That is not a red aspect.
