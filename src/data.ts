@@ -87,6 +87,42 @@ export function getPriority(type: string): number {
   return PRIORITY_MAP[type.toUpperCase()] ?? 5
 }
 
+// Public SimRail servers, grouped by region.
+// Order within a region mirrors SimRail's own listing (PL1 = flagship).
+export type ServerRegion = 'PL' | 'EN' | 'DE' | 'CS' | 'FR'
+
+export type Server = {
+  code: string
+  region: ServerRegion
+  label: string
+}
+
+export const SERVERS: Server[] = [
+  { code: 'pl1', region: 'PL', label: 'Poland 1' },
+  { code: 'pl2', region: 'PL', label: 'Poland 2' },
+  { code: 'pl3', region: 'PL', label: 'Poland 3' },
+  { code: 'pl4', region: 'PL', label: 'Poland 4' },
+  { code: 'pl5', region: 'PL', label: 'Poland 5' },
+  { code: 'en1', region: 'EN', label: 'English 1' },
+  { code: 'en2', region: 'EN', label: 'English 2' },
+  { code: 'en3', region: 'EN', label: 'English 3' },
+  { code: 'en4', region: 'EN', label: 'English 4' },
+  { code: 'de1', region: 'DE', label: 'Deutsch 1' },
+  { code: 'de2', region: 'DE', label: 'Deutsch 2' },
+  { code: 'de3', region: 'DE', label: 'Deutsch 3' },
+  { code: 'cs1', region: 'CS', label: 'Česky 1' },
+  { code: 'cs2', region: 'CS', label: 'Česky 2' },
+  { code: 'fr1', region: 'FR', label: 'Français 1' },
+]
+
+export const REGION_LABEL: Record<ServerRegion, string> = {
+  PL: 'Poland',
+  EN: 'English',
+  DE: 'Deutsch',
+  CS: 'Česky',
+  FR: 'Français',
+}
+
 export const STATIONS: Station[] = [
   {
     id: 'ske',
