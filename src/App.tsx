@@ -8,6 +8,7 @@ import {
 } from './data'
 import {
   computeETASec,
+  detectConflicts,
   etaLabel,
   etaUrgency,
   sortByETA,
@@ -74,7 +75,15 @@ const URGENCY_STYLE: Record<Urgency, { text: string; ring: string; dot: string }
   },
 }
 
-function TrainCard({ train, nowSec }: { train: Train; nowSec: number }) {
+function TrainCard({
+  train,
+  nowSec,
+  conflictsWith,
+}: {
+  train: Train
+  nowSec: number
+  conflictsWith: string[]
+}) {
   const dest = resolveDestination(train.toPost)
   const delay = formatDelay(train.delay)
   const status = statusBadge(train.status)
@@ -82,10 +91,15 @@ function TrainCard({ train, nowSec }: { train: Train; nowSec: number }) {
   const etaSec = computeETASec(train, nowSec)
   const urgency = etaUrgency(etaSec)
   const eta = URGENCY_STYLE[urgency]
+  const inConflict = conflictsWith.length > 0
 
   return (
     <article
-      className={`card-press bg-slate-900 border border-slate-800 rounded-xl overflow-hidden border-l-4 ${dest.color} transition-transform`}
+      className={`card-press bg-slate-900 rounded-xl overflow-hidden border-l-4 ${dest.color} transition-transform ${
+        inConflict
+          ? 'border border-red-500/60 shadow-[0_0_0_1px_rgba(239,68,68,0.35)]'
+          : 'border border-slate-800'
+      }`}
     >
       <div className="p-3.5">
         <div className="flex items-start justify-between gap-2 mb-2">
@@ -173,6 +187,26 @@ function TrainCard({ train, nowSec }: { train: Train; nowSec: number }) {
           </span>
         </div>
 
+        {inConflict && (
+          <div className="mt-2 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-red-500/15 border border-red-500/40 text-[11px] text-red-300">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <path d="M12 9v4" />
+              <path d="M12 17h.01" />
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            </svg>
+            <span className="font-semibold">Platform conflict:</span>
+            <span className="font-mono">{conflictsWith.join(', ')}</span>
+          </div>
+        )}
+
         <div className="mt-2 pt-2 border-t border-slate-800 flex items-center gap-1.5 text-[11px] text-slate-400">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -199,6 +233,18 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
   const nowSec = useSimNow()
+
+  const conflicts = useMemo(() => detectConflicts(TRAINS), [])
+  const conflictPairs = useMemo(() => {
+    const seen = new Set<string>()
+    for (const [a, arr] of conflicts) {
+      for (const b of arr) {
+        const key = [a, b].sort().join('|')
+        seen.add(key)
+      }
+    }
+    return seen.size
+  }, [conflicts])
 
   const filteredTrains = useMemo(() => {
     const filtered = TRAINS.filter((t) => {
@@ -333,6 +379,29 @@ export default function App() {
         </div>
       </div>
 
+      {/* Conflict banner */}
+      {conflictPairs > 0 && (
+        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/40 text-[12px] text-red-200 flex items-center gap-2">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            className="shrink-0"
+          >
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          </svg>
+          <span>
+            <b>{conflictPairs}</b> platform conflict{conflictPairs > 1 ? 's' : ''} detected — reassign platforms
+          </span>
+        </div>
+      )}
+
       {/* Legend for multi-post stations */}
       {currentStation.multiPost && (
         <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-800 text-[11px]">
@@ -362,7 +431,12 @@ export default function App() {
           </div>
         ) : (
           filteredTrains.map((t) => (
-            <TrainCard key={t.number} train={t} nowSec={nowSec} />
+            <TrainCard
+              key={t.number}
+              train={t}
+              nowSec={nowSec}
+              conflictsWith={conflicts.get(t.number) ?? []}
+            />
           ))
         )}
       </main>
