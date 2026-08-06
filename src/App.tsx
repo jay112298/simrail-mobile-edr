@@ -6,6 +6,14 @@ import {
   type Station,
   type Train,
 } from './data'
+import {
+  computeETASec,
+  etaLabel,
+  etaUrgency,
+  sortByETA,
+  useSimNow,
+  type Urgency,
+} from './lib/dispatch'
 import InstallPrompt from './InstallPrompt'
 
 type Filter = 'all' | 'passenger' | 'freight' | 'delayed' | 'approaching'
@@ -38,11 +46,42 @@ function statusBadge(status: Train['status']) {
   return map[status]
 }
 
-function TrainCard({ train }: { train: Train }) {
+const URGENCY_STYLE: Record<Urgency, { text: string; ring: string; dot: string }> = {
+  now: {
+    text: 'text-red-300',
+    ring: 'bg-red-500/15 border-red-500/40',
+    dot: 'bg-red-400 animate-pulse',
+  },
+  imminent: {
+    text: 'text-red-300',
+    ring: 'bg-red-500/10 border-red-500/30',
+    dot: 'bg-red-400',
+  },
+  soon: {
+    text: 'text-amber-300',
+    ring: 'bg-amber-500/10 border-amber-500/30',
+    dot: 'bg-amber-400',
+  },
+  later: {
+    text: 'text-slate-300',
+    ring: 'bg-slate-800 border-slate-700',
+    dot: 'bg-slate-500',
+  },
+  past: {
+    text: 'text-slate-500',
+    ring: 'bg-slate-800/60 border-slate-700/60',
+    dot: 'bg-slate-600',
+  },
+}
+
+function TrainCard({ train, nowSec }: { train: Train; nowSec: number }) {
   const dest = resolveDestination(train.toPost)
   const delay = formatDelay(train.delay)
   const status = statusBadge(train.status)
   const isFreight = train.category === 'freight'
+  const etaSec = computeETASec(train, nowSec)
+  const urgency = etaUrgency(etaSec)
+  const eta = URGENCY_STYLE[urgency]
 
   return (
     <article
@@ -64,13 +103,16 @@ function TrainCard({ train }: { train: Train }) {
             )}
           </div>
           <div className="text-right shrink-0">
-            <div className={`text-sm font-semibold ${delay.cls}`}>
-              {delay.text}
+            <div
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border font-semibold text-sm ${eta.ring} ${eta.text}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${eta.dot}`} />
+              {etaLabel(etaSec)}
             </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
+            <div className="text-[10px] text-slate-500 mt-1">
               {train.distance > 0
-                ? `${train.distance.toFixed(1)} km`
-                : 'At station'}
+                ? `${train.distance.toFixed(1)} km · ${delay.text}`
+                : `At station · ${delay.text}`}
             </div>
           </div>
         </div>
@@ -141,9 +183,10 @@ export default function App() {
   const [currentFilter, setCurrentFilter] = useState<Filter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
+  const nowSec = useSimNow()
 
   const filteredTrains = useMemo(() => {
-    return TRAINS.filter((t) => {
+    const filtered = TRAINS.filter((t) => {
       if (currentFilter === 'passenger' && t.category !== 'passenger')
         return false
       if (currentFilter === 'freight' && t.category !== 'freight') return false
@@ -158,7 +201,8 @@ export default function App() {
         return false
       return true
     })
-  }, [currentFilter, searchQuery])
+    return sortByETA(filtered, nowSec)
+  }, [currentFilter, searchQuery, nowSec])
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -300,7 +344,9 @@ export default function App() {
             <p className="text-sm">No trains match the filter</p>
           </div>
         ) : (
-          filteredTrains.map((t) => <TrainCard key={t.number} train={t} />)
+          filteredTrains.map((t) => (
+            <TrainCard key={t.number} train={t} nowSec={nowSec} />
+          ))
         )}
       </main>
 
