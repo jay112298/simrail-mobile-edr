@@ -41,6 +41,7 @@ import InstallPrompt from './InstallPrompt'
 import TrainDetail from './TrainDetail'
 import DriverView from './DriverView'
 import SchematicMap from './SchematicMap'
+import buildInfo from './build-info.json'
 
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
 // "live" was a stub and is redundant now that the timetable carries live
@@ -1066,6 +1067,26 @@ export default function App() {
                 />
               </span>
             </button>
+          </section>
+
+          <section className="text-[11px] text-slate-500 space-y-1">
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+              Build
+            </h2>
+            {/* So "am I actually running the new APK?" is answerable without
+                guessing. Matches the versionName Android reports. */}
+            <p>
+              Version{' '}
+              <span className="font-mono text-slate-300">
+                {buildInfo.versionName}
+              </span>
+            </p>
+            <p>
+              Built{' '}
+              <span className="font-mono text-slate-300">
+                {buildInfo.builtAt.slice(0, 16).replace('T', ' ')} UTC
+              </span>
+            </p>
           </section>
 
           <section className="text-[11px] text-slate-500 space-y-1">

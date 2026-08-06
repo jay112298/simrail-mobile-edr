@@ -20,6 +20,20 @@ The build is a **debug-signed APK**. It installs fine alongside anything else,
 but it is not Play Store signed, so Android shows the usual unknown-source
 prompt.
 
+### Updating
+
+Check **Settings → Build** in the app; it shows the version and build time, so
+you can confirm which APK you are actually running.
+
+If you installed a build from before version `1.0.0 (3)`, **uninstall the app
+first** (or Settings → Apps → SimRail EDR → Storage → Clear data) before
+installing the new one. Those builds registered a service worker, and Android
+keeps app data across an update — so the old worker survives and keeps serving
+its cached copy of the old app even though the new APK is installed. Later
+builds remove that worker on startup, but the removal only runs once the new
+code loads, which is exactly what the stale worker prevents. One clean install
+breaks the loop permanently.
+
 ---
 
 ## What it does

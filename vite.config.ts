@@ -23,6 +23,10 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registration is done by hand in main.tsx: the auto-injected script
+      // cannot tell a browser from the packaged app, and inside the APK a
+      // service worker only serves stale assets over the ones the APK ships.
+      injectRegister: null,
       includeAssets: [
         'favicon.svg',
         'favicon-32.png',
