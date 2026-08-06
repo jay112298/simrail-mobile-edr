@@ -16,7 +16,7 @@ import {
 } from './lib/dispatch'
 import InstallPrompt from './InstallPrompt'
 
-type Filter = 'all' | 'passenger' | 'freight' | 'delayed' | 'approaching'
+type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
 
 function formatDelay(min: number) {
   if (min === 0) return { text: 'On time', cls: 'delay-ontime' }
@@ -99,6 +99,21 @@ function TrainCard({ train, nowSec }: { train: Train; nowSec: number }) {
             {isFreight && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
                 Freight
+              </span>
+            )}
+            {train.driver === 'player' ? (
+              <span
+                title="Player-driven"
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 border border-emerald-300 shadow-[0_0_8px_rgba(52,211,153,0.35)]"
+              >
+                PLAYER
+              </span>
+            ) : (
+              <span
+                title="AI-driven"
+                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700"
+              >
+                AI
               </span>
             )}
           </div>
@@ -187,6 +202,7 @@ export default function App() {
 
   const filteredTrains = useMemo(() => {
     const filtered = TRAINS.filter((t) => {
+      if (currentFilter === 'player' && t.driver !== 'player') return false
       if (currentFilter === 'passenger' && t.category !== 'passenger')
         return false
       if (currentFilter === 'freight' && t.category !== 'freight') return false
@@ -206,6 +222,7 @@ export default function App() {
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'all', label: 'All' },
+    { id: 'player', label: 'Player' },
     { id: 'passenger', label: 'Passenger' },
     { id: 'freight', label: 'Freight' },
     { id: 'delayed', label: 'Delayed' },
