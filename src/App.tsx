@@ -15,6 +15,8 @@ import {
   useSimNow,
   type Urgency,
 } from './lib/dispatch'
+import { useLocalStorage } from './lib/storage'
+import { hapticTap } from './lib/haptic'
 import InstallPrompt from './InstallPrompt'
 import TrainDetail from './TrainDetail'
 
@@ -115,10 +117,14 @@ function TrainCard({
     <article
       role="button"
       tabIndex={0}
-      onClick={() => onOpen(train)}
+      onClick={() => {
+        hapticTap()
+        onOpen(train)
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
+          hapticTap()
           onOpen(train)
         }
       }}
@@ -311,13 +317,17 @@ function NavIcon({ id }: { id: View }) {
 }
 
 export default function App() {
-  const [currentStation, setCurrentStation] = useState<Station>(STATIONS[0])
-  const [currentFilter, setCurrentFilter] = useState<Filter>('all')
+  const [stationId, setStationId] = useLocalStorage<string>('station', STATIONS[0].id)
+  const [currentFilter, setCurrentFilter] = useLocalStorage<Filter>('filter', 'all')
+  const [view, setView] = useLocalStorage<View>('view', 'timetable')
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
   const [selectedTrain, setSelectedTrain] = useState<Train | null>(null)
-  const [view, setView] = useState<View>('timetable')
   const nowSec = useSimNow()
+
+  const currentStation: Station =
+    STATIONS.find((s) => s.id === stationId) ?? STATIONS[0]
+  const setCurrentStation = (s: Station) => setStationId(s.id)
 
   const conflicts = useMemo(() => detectConflicts(TRAINS), [])
   const conflictPairs = useMemo(() => {
@@ -350,6 +360,25 @@ export default function App() {
     })
     return sortByETA(filtered, nowSec)
   }, [currentFilter, searchQuery, nowSec])
+
+  // Counts per filter — respects current search so numbers match visible list.
+  const filterCounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const bySearch = TRAINS.filter(
+      (t) =>
+        !q ||
+        t.number.toLowerCase().includes(q) ||
+        t.type.toLowerCase().includes(q),
+    )
+    return {
+      all: bySearch.length,
+      player: bySearch.filter((t) => t.driver === 'player').length,
+      passenger: bySearch.filter((t) => t.category === 'passenger').length,
+      freight: bySearch.filter((t) => t.category === 'freight').length,
+      delayed: bySearch.filter((t) => t.delay > 0).length,
+      approaching: bySearch.filter((t) => t.status === 'approaching').length,
+    } as Record<Filter, number>
+  }, [searchQuery])
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -429,19 +458,35 @@ export default function App() {
       {/* Filters (inside sticky wrapper — stays glued to header) */}
       <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-900">
         <div className="flex gap-2 overflow-x-auto scroll-hide pb-0.5">
-          {filters.map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setCurrentFilter(f.id)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                currentFilter === f.id
-                  ? 'bg-sky-400 text-slate-950'
-                  : 'bg-slate-800 text-slate-300 border border-slate-700'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+          {filters.map((f) => {
+            const active = currentFilter === f.id
+            const count = filterCounts[f.id]
+            return (
+              <button
+                key={f.id}
+                onClick={() => {
+                  hapticTap()
+                  setCurrentFilter(f.id)
+                }}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors inline-flex items-center gap-1.5 ${
+                  active
+                    ? 'bg-sky-400 text-slate-950'
+                    : 'bg-slate-800 text-slate-300 border border-slate-700'
+                }`}
+              >
+                <span>{f.label}</span>
+                <span
+                  className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${
+                    active
+                      ? 'bg-slate-950/20 text-slate-950'
+                      : 'bg-slate-950/60 text-slate-400'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            )
+          })}
         </div>
         <div className="mt-2 relative">
           <input
@@ -570,7 +615,10 @@ export default function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setView(item.id)}
+                onClick={() => {
+                  hapticTap()
+                  setView(item.id)
+                }}
                 aria-current={active ? 'page' : undefined}
                 className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg transition-colors ${
                   active ? 'text-sky-400' : 'text-slate-400 hover:text-slate-200'
@@ -616,6 +664,7 @@ export default function App() {
                 <button
                   key={s.id}
                   onClick={() => {
+                    hapticTap()
                     setCurrentStation(s)
                     setShowStationModal(false)
                   }}
