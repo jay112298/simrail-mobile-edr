@@ -106,11 +106,11 @@ export default function TrainDetail({
                 {train.type}
               </span>
               {train.driver === 'player' ? (
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 border border-emerald-300">
+                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 border border-emerald-300">
                   PLAYER
                 </span>
               ) : (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
                   AI
                 </span>
               )}
@@ -126,7 +126,7 @@ export default function TrainDetail({
 
           <div className="flex items-center gap-2 mb-2">
             <span
-              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold text-white badge-${dest.badge.toLowerCase()}`}
+              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white badge-${dest.badge.toLowerCase()}`}
             >
               {dest.badge}
             </span>
@@ -151,43 +151,43 @@ export default function TrainDetail({
           {/* Vitals grid */}
           <div className="grid grid-cols-2 gap-2 p-3 text-xs">
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">ETA</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">ETA</p>
               <p className={`font-semibold mt-0.5 ${urgency === 'now' || urgency === 'imminent' ? 'text-red-300' : urgency === 'soon' ? 'text-amber-300' : 'text-white'}`}>
                 {etaLabel(etaSec)}
               </p>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Delay</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Delay</p>
               <p className={`font-semibold mt-0.5 ${train.delay > 0 ? 'text-red-400' : train.delay < 0 ? 'text-emerald-400' : 'text-slate-300'}`}>
                 {train.delay === 0 ? 'On time' : train.delay > 0 ? `+${train.delay}′` : `${train.delay}′`}
               </p>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Speed</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Speed</p>
               <p className="font-semibold mt-0.5 text-white">
                 {train.speed} <span className="text-slate-500 text-xs">/ {train.maxSpeed} km/h</span>
               </p>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Signal</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Signal</p>
               <span className={`inline-block mt-0.5 text-[11px] px-2 py-0.5 rounded-full border font-semibold ${signal.cls}`}>
                 {signal.label}
               </span>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Length</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Length</p>
               <p className="font-semibold mt-0.5 text-white">{train.length} m</p>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Weight</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Weight</p>
               <p className="font-semibold mt-0.5 text-white">{train.weight} t</p>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Line</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Line</p>
               <p className="font-semibold mt-0.5 text-white">{train.line}</p>
             </div>
             <div className="bg-slate-800/60 border border-slate-800 rounded-lg p-2.5">
-              <p className="text-[10px] uppercase text-slate-500 tracking-wider">Distance</p>
+              <p className="text-[11px] uppercase text-slate-500 tracking-wider">Distance</p>
               <p className="font-semibold mt-0.5 text-white">
                 {train.distance > 0 ? `${train.distance.toFixed(1)} km` : 'At station'}
               </p>
@@ -196,7 +196,7 @@ export default function TrainDetail({
 
           {/* Route */}
           <div className="px-3">
-            <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold px-1 mt-2 mb-1">
+            <h3 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold px-1 mt-2 mb-1">
               Route
             </h3>
             <ol className="relative bg-slate-800/40 border border-slate-800 rounded-lg divide-y divide-slate-800">

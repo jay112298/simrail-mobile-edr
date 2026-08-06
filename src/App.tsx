@@ -27,6 +27,20 @@ function formatDelay(min: number) {
   return { text: `+${min}′`, cls: 'delay-late' }
 }
 
+// Priority (1=EIP highest → 6=freight lowest). Colors chosen for at-a-glance class ID.
+const PRIORITY_CHIP: Record<number, string> = {
+  1: 'bg-amber-300 text-slate-950 border border-amber-200',
+  2: 'bg-slate-200 text-slate-900 border border-slate-100',
+  3: 'bg-orange-400 text-slate-950 border border-orange-300',
+  4: 'bg-purple-400 text-slate-950 border border-purple-300',
+  5: 'bg-slate-800 text-slate-300 border border-slate-700',
+  6: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
+}
+
+function priorityChipCls(priority: number): string {
+  return PRIORITY_CHIP[priority] ?? PRIORITY_CHIP[5]
+}
+
 function statusBadge(status: Train['status']) {
   const map = {
     approaching: {
@@ -117,28 +131,31 @@ function TrainCard({
       <div className="p-3.5">
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="font-mono font-bold text-lg text-white tracking-tight">
+            <span className="font-mono font-bold text-xl text-white tracking-tight">
               {train.number}
             </span>
-            <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+            <span
+              title={`Priority ${train.priority}`}
+              className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${priorityChipCls(train.priority)}`}
+            >
               {train.type}
             </span>
             {isFreight && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
                 Freight
               </span>
             )}
             {train.driver === 'player' ? (
               <span
                 title="Player-driven"
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 border border-emerald-300 shadow-[0_0_8px_rgba(52,211,153,0.35)]"
+                className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 border border-emerald-300 shadow-[0_0_8px_rgba(52,211,153,0.35)]"
               >
                 PLAYER
               </span>
             ) : (
               <span
                 title="AI-driven"
-                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700"
+                className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700"
               >
                 AI
               </span>
@@ -146,12 +163,12 @@ function TrainCard({
           </div>
           <div className="text-right shrink-0">
             <div
-              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border font-semibold text-sm ${eta.ring} ${eta.text}`}
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border font-bold text-[15px] tabular-nums ${eta.ring} ${eta.text}`}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${eta.dot}`} />
               {etaLabel(etaSec)}
             </div>
-            <div className="text-[10px] text-slate-500 mt-1">
+            <div className="text-[11px] text-slate-500 mt-1">
               {train.distance > 0
                 ? `${train.distance.toFixed(1)} km · ${delay.text}`
                 : `At station · ${delay.text}`}
@@ -163,7 +180,7 @@ function TrainCard({
         <div className="mb-2.5">
           <div className="flex items-center gap-2">
             <span
-              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold text-white badge-${dest.badge.toLowerCase()}`}
+              className={`inline-flex items-center justify-center w-5 h-5 rounded text-[11px] font-bold text-white badge-${dest.badge.toLowerCase()}`}
             >
               {dest.badge}
             </span>
@@ -176,25 +193,25 @@ function TrainCard({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs">
+        <div className="flex items-center justify-between text-[13px]">
           <div className="flex items-center gap-3 text-slate-300">
             <div>
-              <span className="text-slate-500">Arr</span>
-              <span className="font-mono ml-1">{train.arrival}</span>
+              <span className="text-slate-500 text-[11px]">Arr</span>
+              <span className="font-mono ml-1 tabular-nums">{train.arrival}</span>
             </div>
             <div>
-              <span className="text-slate-500">Dep</span>
-              <span className="font-mono ml-1">{train.departure}</span>
+              <span className="text-slate-500 text-[11px]">Dep</span>
+              <span className="font-mono ml-1 tabular-nums">{train.departure}</span>
             </div>
             {train.platform !== '-' && (
               <div>
-                <span className="text-slate-500">Pl</span>
-                <span className="ml-1">{train.platform}</span>
+                <span className="text-slate-500 text-[11px]">Pl</span>
+                <span className="ml-1 font-semibold">{train.platform}</span>
               </div>
             )}
           </div>
           <span
-            className={`text-[10px] px-2 py-0.5 rounded-full border ${status.cls}`}
+            className={`text-[11px] px-2 py-0.5 rounded-full border ${status.cls}`}
           >
             {status.label}
           </span>
@@ -345,8 +362,9 @@ export default function App() {
 
   return (
     <div className="max-w-lg mx-auto min-h-screen flex flex-col relative bg-slate-950 text-slate-100">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-4 pt-3 pb-2">
+      {/* Sticky stack: header + (timetable-only) filter row */}
+      <div className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md">
+      <header className="border-b border-slate-800 px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center">
@@ -368,7 +386,7 @@ export default function App() {
               <h1 className="text-sm font-semibold tracking-wide text-white">
                 Mobile EDR
               </h1>
-              <p className="text-[10px] text-slate-400 leading-none">
+              <p className="text-[11px] text-slate-400 leading-none">
                 SimRail · Installable
               </p>
             </div>
@@ -384,7 +402,7 @@ export default function App() {
           className="w-full flex items-center justify-between bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-left"
         >
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">
+            <p className="text-[11px] uppercase tracking-wider text-slate-400 mb-0.5">
               Dispatch Post
             </p>
             <p className="text-base font-semibold text-white">
@@ -408,8 +426,8 @@ export default function App() {
 
       {view === 'timetable' && (
         <>
-      {/* Filters */}
-      <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 sticky top-[108px] z-20">
+      {/* Filters (inside sticky wrapper — stays glued to header) */}
+      <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-900">
         <div className="flex gap-2 overflow-x-auto scroll-hide pb-0.5">
           {filters.map((f) => (
             <button
@@ -493,25 +511,38 @@ export default function App() {
         </div>
       )}
 
-      {/* Train list */}
-      <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5 pb-24">
-        {filteredTrains.length === 0 ? (
-          <div className="text-center py-16 text-slate-500">
-            <p className="text-sm">No trains match the filter</p>
-          </div>
-        ) : (
-          filteredTrains.map((t) => (
-            <TrainCard
-              key={t.number}
-              train={t}
-              nowSec={nowSec}
-              conflictsWith={conflicts.get(t.number) ?? []}
-              onOpen={setSelectedTrain}
-            />
-          ))
-        )}
-      </main>
         </>
+      )}
+      </div>
+      {/* End sticky stack */}
+
+      {view === 'timetable' && (
+        <main className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5 pb-24">
+          {filteredTrains.length === 0 ? (
+            <div className="text-center py-16 text-slate-500 space-y-3">
+              <p className="text-sm">No trains match the current filter</p>
+              <button
+                onClick={() => {
+                  setCurrentFilter('all')
+                  setSearchQuery('')
+                }}
+                className="text-xs font-medium px-3 py-1.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/40"
+              >
+                Clear filter
+              </button>
+            </div>
+          ) : (
+            filteredTrains.map((t) => (
+              <TrainCard
+                key={t.number}
+                train={t}
+                nowSec={nowSec}
+                conflictsWith={conflicts.get(t.number) ?? []}
+                onOpen={setSelectedTrain}
+              />
+            ))
+          )}
+        </main>
       )}
 
       {view !== 'timetable' && (
@@ -533,7 +564,7 @@ export default function App() {
 
       {/* Bottom nav */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-4 py-2.5 safe-bottom z-30">
-        <div className="flex items-center justify-around text-[10px]">
+        <div className="flex items-center justify-around text-[11px]">
           {NAV_ITEMS.map((item) => {
             const active = view === item.id
             return (
