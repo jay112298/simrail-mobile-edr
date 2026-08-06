@@ -16,6 +16,7 @@ import {
   type Urgency,
 } from './lib/dispatch'
 import InstallPrompt from './InstallPrompt'
+import TrainDetail from './TrainDetail'
 
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
 
@@ -79,10 +80,12 @@ function TrainCard({
   train,
   nowSec,
   conflictsWith,
+  onOpen,
 }: {
   train: Train
   nowSec: number
   conflictsWith: string[]
+  onOpen: (t: Train) => void
 }) {
   const dest = resolveDestination(train.toPost)
   const delay = formatDelay(train.delay)
@@ -95,7 +98,16 @@ function TrainCard({
 
   return (
     <article
-      className={`card-press bg-slate-900 rounded-xl overflow-hidden border-l-4 ${dest.color} transition-transform ${
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(train)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(train)
+        }
+      }}
+      className={`card-press cursor-pointer bg-slate-900 rounded-xl overflow-hidden border-l-4 ${dest.color} transition-transform focus:outline-none focus:ring-2 focus:ring-sky-400/60 ${
         inConflict
           ? 'border border-red-500/60 shadow-[0_0_0_1px_rgba(239,68,68,0.35)]'
           : 'border border-slate-800'
@@ -232,6 +244,7 @@ export default function App() {
   const [currentFilter, setCurrentFilter] = useState<Filter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
+  const [selectedTrain, setSelectedTrain] = useState<Train | null>(null)
   const nowSec = useSimNow()
 
   const conflicts = useMemo(() => detectConflicts(TRAINS), [])
@@ -436,6 +449,7 @@ export default function App() {
               train={t}
               nowSec={nowSec}
               conflictsWith={conflicts.get(t.number) ?? []}
+              onOpen={setSelectedTrain}
             />
           ))
         )}
@@ -516,6 +530,16 @@ export default function App() {
           </button>
         </div>
       </nav>
+
+      {/* Train Detail Sheet */}
+      {selectedTrain && (
+        <TrainDetail
+          train={selectedTrain}
+          nowSec={nowSec}
+          conflictsWith={conflicts.get(selectedTrain.number) ?? []}
+          onClose={() => setSelectedTrain(null)}
+        />
+      )}
 
       {/* Station Modal */}
       {showStationModal && (
