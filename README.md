@@ -39,6 +39,9 @@ prompt.
 - **Driver mode** — your own train's full booked route with a "you are here"
   marker, per-stop countdowns, line kilometre posts and speed limits. Enter
   your Steam ID once and it finds your train by itself.
+- **Line schematic** — every train within 25 km of your post, plotted by
+  kilometre post on each line through it, with direction of travel and signal
+  aspect. Pure SVG: no tile server, no dependency, works offline.
 - **Platform conflict detection** — overlapping occupation windows on the same
   platform are flagged on both trains.
 - **Three list densities** — switchable in Settings and remembered, because a

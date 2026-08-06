@@ -13,6 +13,7 @@ import {
 } from './data'
 import { normalizeRegion } from './lib/api'
 import { haversineKm } from './lib/geo'
+import { buildSchematic } from './lib/schematic'
 import { useServers, useStations, useTrains } from './lib/useLive'
 import {
   computeETASec,
@@ -39,6 +40,7 @@ import { hapticTap } from './lib/haptic'
 import InstallPrompt from './InstallPrompt'
 import TrainDetail from './TrainDetail'
 import DriverView from './DriverView'
+import SchematicMap from './SchematicMap'
 
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
 // "live" was a stub and is redundant now that the timetable carries live
@@ -574,6 +576,14 @@ export default function App() {
       : allTrains.filter((t) => t.driver === 'player')
     return pool.slice(0, 60)
   }, [allTrains, driverQuery])
+
+  // Built from every train at the post, not the filtered list: a schematic
+  // that hides trains because of a category filter would misrepresent the
+  // line.
+  const schematicLines = useMemo(
+    () => buildSchematic(trains, timetables, currentStation.name, serverNowSec),
+    [trains, timetables, currentStation.name, serverNowSec],
+  )
 
   const visibleStations = useMemo(() => {
     const q = stationQuery.trim().toLowerCase()
@@ -1122,17 +1132,11 @@ export default function App() {
         ))}
 
       {view === 'map' && (
-        <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center pb-32">
-          <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4 text-2xl">
-            🗺
-          </div>
-          <h2 className="text-lg font-semibold text-white capitalize mb-1">
-            {view}
-          </h2>
-          <p className="text-sm text-slate-400 max-w-xs">
-            Coming in a later phase. Timetable is the working view for now.
-          </p>
-        </main>
+        <SchematicMap
+          lines={schematicLines}
+          postName={currentStation.name}
+          onOpen={setSelectedTrain}
+        />
       )}
 
       {/* Driver train picker */}

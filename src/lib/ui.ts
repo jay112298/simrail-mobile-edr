@@ -124,6 +124,18 @@ export const SIGNAL_LABEL: Record<Train['signalState'], string> = {
   unknown: 'Unknown',
 }
 
+/**
+ * Literal hex for SVG fills. Tailwind only emits classes it can find in the
+ * source, so a class name assembled at runtime would silently render
+ * unstyled — hence real colour values here rather than `fill-*` utilities.
+ */
+export const SIGNAL_HEX: Record<Train['signalState'], string> = {
+  green: '#34d399',
+  yellow: '#fbbf24',
+  red: '#f87171',
+  unknown: '#64748b',
+}
+
 export const SIGNAL_DOT: Record<Train['signalState'], string> = {
   green: 'bg-emerald-400',
   yellow: 'bg-amber-400',
