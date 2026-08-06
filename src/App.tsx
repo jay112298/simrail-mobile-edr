@@ -3,8 +3,8 @@ import {
   REGION_LABEL,
   SERVERS,
   STATIONS,
-  TRAINS,
   resolveDestination,
+  trainsForServer,
   type Server,
   type ServerRegion,
   type Station,
@@ -338,6 +338,12 @@ export default function App() {
   const currentServer: Server =
     SERVERS.find((s) => s.code === serverCode) ?? SERVERS[0]
 
+  // Per-server train list. Phase 4 will swap this for a live fetch.
+  const trains = useMemo(
+    () => trainsForServer(currentServer.code),
+    [currentServer.code],
+  )
+
   const serversByRegion = useMemo(() => {
     const groups = new Map<ServerRegion, Server[]>()
     for (const s of SERVERS) {
@@ -348,7 +354,7 @@ export default function App() {
     return groups
   }, [])
 
-  const conflicts = useMemo(() => detectConflicts(TRAINS), [])
+  const conflicts = useMemo(() => detectConflicts(trains), [trains])
   const conflictPairs = useMemo(() => {
     const seen = new Set<string>()
     for (const [a, arr] of conflicts) {
@@ -361,7 +367,7 @@ export default function App() {
   }, [conflicts])
 
   const filteredTrains = useMemo(() => {
-    const filtered = TRAINS.filter((t) => {
+    const filtered = trains.filter((t) => {
       if (currentFilter === 'player' && t.driver !== 'player') return false
       if (currentFilter === 'passenger' && t.category !== 'passenger')
         return false
@@ -378,12 +384,12 @@ export default function App() {
       return true
     })
     return sortByETA(filtered, nowSec)
-  }, [currentFilter, searchQuery, nowSec])
+  }, [trains, currentFilter, searchQuery, nowSec])
 
   // Counts per filter — respects current search so numbers match visible list.
   const filterCounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    const bySearch = TRAINS.filter(
+    const bySearch = trains.filter(
       (t) =>
         !q ||
         t.number.toLowerCase().includes(q) ||
@@ -397,7 +403,7 @@ export default function App() {
       delayed: bySearch.filter((t) => t.delay > 0).length,
       approaching: bySearch.filter((t) => t.status === 'approaching').length,
     } as Record<Filter, number>
-  }, [searchQuery])
+  }, [trains, searchQuery])
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'all', label: 'All' },
