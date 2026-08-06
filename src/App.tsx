@@ -409,10 +409,11 @@ export default function App() {
     () => rawTrains.filter((t) => t.live).map((t) => t.number),
     [rawTrains],
   )
-  const { timetables, pending: timetablePending } = useTimetables(
-    currentServer.code,
-    liveTrainNos,
-  )
+  const {
+    timetables,
+    pending: timetablePending,
+    unresolved: timetableUnresolved,
+  } = useTimetables(currentServer.code, liveTrainNos)
 
   const allTrains = useMemo(
     () =>
@@ -910,6 +911,13 @@ export default function App() {
               <span className="font-mono text-slate-300">{timetables.size}</span>
               {timetablePending > 0 && ` · ${timetablePending} loading`}
             </p>
+            {timetableUnresolved > 0 && (
+              <p className="text-amber-400">
+                {timetableUnresolved} train
+                {timetableUnresolved === 1 ? '' : 's'} have no timetable after{' '}
+                retries — hidden while “This post only” is on.
+              </p>
+            )}
           </section>
         </main>
       )}

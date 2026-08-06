@@ -66,27 +66,43 @@ export type TimetableMap = Map<string, TrainTimetable>
  * poll does not re-request the whole set each tick. Results are cached in
  * IndexedDB by the layer below, making later sessions near-instant.
  */
+const MAX_ATTEMPTS = 3
+
 export function useTimetables(
   serverCode: string,
   trainNos: string[],
-): { timetables: TimetableMap; pending: number } {
+): { timetables: TimetableMap; pending: number; unresolved: number } {
   const [timetables, setTimetables] = useState<TimetableMap>(() => new Map())
   const [pending, setPending] = useState(0)
-  const requested = useRef<Set<string>>(new Set())
+  const resolved = useRef<Set<string>>(new Set())
+  const inFlight = useRef<Set<string>>(new Set())
+  // A failed fetch used to mark the train as requested forever, so one
+  // transient error hid that train from the boundary list for the whole
+  // session. Failures are counted instead and retried on the next poll.
+  const attempts = useRef<Map<string, number>>(new Map())
+  const [unresolved, setUnresolved] = useState(0)
 
   // Changing server invalidates everything gathered for the previous one.
   useEffect(() => {
-    requested.current = new Set()
+    resolved.current = new Set()
+    inFlight.current = new Set()
+    attempts.current = new Map()
     setTimetables(new Map())
     setPending(0)
+    setUnresolved(0)
   }, [serverCode])
 
   const key = trainNos.join(',')
 
   useEffect(() => {
-    const missing = trainNos.filter((n) => !requested.current.has(n))
+    const missing = trainNos.filter(
+      (n) =>
+        !resolved.current.has(n) &&
+        !inFlight.current.has(n) &&
+        (attempts.current.get(n) ?? 0) < MAX_ATTEMPTS,
+    )
     if (missing.length === 0) return
-    for (const n of missing) requested.current.add(n)
+    for (const n of missing) inFlight.current.add(n)
 
     const ctrl = new AbortController()
     setPending((p) => p + missing.length)
@@ -95,8 +111,15 @@ export function useTimetables(
       serverCode,
       missing,
       (trainNo, tt) => {
+        inFlight.current.delete(trainNo)
         setPending((p) => Math.max(0, p - 1))
-        if (!tt) return
+        if (!tt) {
+          const n = (attempts.current.get(trainNo) ?? 0) + 1
+          attempts.current.set(trainNo, n)
+          if (n >= MAX_ATTEMPTS) setUnresolved((u) => u + 1)
+          return
+        }
+        resolved.current.add(trainNo)
         setTimetables((prev) => {
           const next = new Map(prev)
           next.set(trainNo, tt)
@@ -106,11 +129,15 @@ export function useTimetables(
       { signal: ctrl.signal },
     )
 
-    return () => ctrl.abort()
+    return () => {
+      ctrl.abort()
+      // Aborted trains never resolved, so let the next pass pick them up.
+      for (const n of missing) inFlight.current.delete(n)
+    }
     // `key` is the stable projection of trainNos; trainNos itself is a new
     // array identity on every poll.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverCode, key])
 
-  return { timetables, pending }
+  return { timetables, pending, unresolved }
 }
