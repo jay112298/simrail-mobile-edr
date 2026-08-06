@@ -34,6 +34,11 @@ prompt.
 - **Live telemetry** — current speed, signal aspect, and distance to the next
   signal, polled every 15 s.
 - **Real delay** — computed against the in-game clock, not wall time.
+- **Distance to your post** — straight-line, from live train position to the
+  station's coordinates.
+- **Driver mode** — your own train's full booked route with a "you are here"
+  marker, per-stop countdowns, line kilometre posts and speed limits. Enter
+  your Steam ID once and it finds your train by itself.
 - **Platform conflict detection** — overlapping occupation windows on the same
   platform are flagged on both trains.
 - **Three list densities** — switchable in Settings and remembered, because a

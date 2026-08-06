@@ -116,6 +116,9 @@ type ApiStation = {
   Name: string
   Prefix: string
   DifficultyLevel: number
+  // Yes, the API really does spell it "Latititude".
+  Latititude: number | null
+  Longitude: number | null
   DispatchedBy: { ServerCode: string; SteamId: string | null }[] | null
 }
 
@@ -139,6 +142,8 @@ export async function fetchStations(
       prefix: s.Prefix,
       difficulty: s.DifficultyLevel,
       dispatchedBy: s.DispatchedBy?.length ?? 0,
+      lat: s.Latititude ?? null,
+      lon: s.Longitude ?? null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -230,6 +235,9 @@ function mapTrain(t: ApiTrain): Train {
         ? signalLimit
         : undefined,
     vehicles: t.Vehicles,
+    controlledBy: t.TrainData.ControlledBySteamID ?? undefined,
+    lat: t.TrainData.Latititute,
+    lon: t.TrainData.Longitute,
   }
 }
 

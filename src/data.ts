@@ -50,6 +50,9 @@ export type DispatchStation = {
   difficulty: number
   /** How many players are currently signed in to this post. */
   dispatchedBy: number
+  /** Post position, used for straight-line distance to approaching trains. */
+  lat: number | null
+  lon: number | null
 }
 
 export type SignalState = 'green' | 'yellow' | 'red' | 'unknown'
@@ -105,6 +108,11 @@ export type Train = {
   signalSpeed?: number
   /** Raw SimRail vehicle ids, locomotive first. */
   vehicles?: string[]
+  /** Steam64 id of the player driving, when it is not an AI train. */
+  controlledBy?: string
+  /** Live position, used for real distance to the dispatch post. */
+  lat?: number
+  lon?: number
 }
 
 export type DestinationInfo = {
@@ -278,6 +286,10 @@ export const FALLBACK_STATIONS: DispatchStation[] = STATIONS.map((s) => ({
   prefix: s.id.slice(0, 3).toUpperCase(),
   difficulty: s.difficulty,
   dispatchedBy: 0,
+  // Coordinates only come from the API; without them distance is simply
+  // not shown rather than guessed.
+  lat: null,
+  lon: null,
 }))
 
 // Post code → destination info (what dispatcher actually needs to see).

@@ -12,6 +12,7 @@ import {
   type Train,
 } from './data'
 import { normalizeRegion } from './lib/api'
+import { haversineKm } from './lib/geo'
 import { useServers, useStations, useTrains } from './lib/useLive'
 import {
   computeETASec,
@@ -37,9 +38,17 @@ import { useLocalStorage } from './lib/storage'
 import { hapticTap } from './lib/haptic'
 import InstallPrompt from './InstallPrompt'
 import TrainDetail from './TrainDetail'
+import DriverView from './DriverView'
 
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
-type View = 'timetable' | 'live' | 'map' | 'settings'
+// "live" was a stub and is redundant now that the timetable carries live
+// speed and signals; the slot is driver mode instead. Existing installs have
+// 'live' persisted, so it is migrated on read.
+type View = 'timetable' | 'driver' | 'map' | 'settings'
+
+function migrateView(v: string): View {
+  return v === 'live' ? 'driver' : (v as View)
+}
 
 /** How tightly the train list is packed. Persisted — see DENSITY_OPTIONS. */
 type Density = 'rows' | 'table' | 'cards'
@@ -172,7 +181,7 @@ function TrainCard({
             )}
             <div className="text-[11px] text-slate-500 mt-1">
               {train.hasTimetable
-                ? `${train.speed} km/h · ${delay.text}`
+                ? `${train.speed} km/h${train.distance > 0 ? ` · ${train.distance.toFixed(1)} km out` : ''} · ${delay.text}`
                 : train.live
                 ? train.signalDistance !== undefined
                   ? `${formatMetres(train.signalDistance)} to signal`
@@ -317,7 +326,7 @@ function TrainCard({
 
 const NAV_ITEMS: { id: View; label: string }[] = [
   { id: 'timetable', label: 'Timetable' },
-  { id: 'live', label: 'Live' },
+  { id: 'driver', label: 'Driver' },
   { id: 'map', label: 'Map' },
   { id: 'settings', label: 'Settings' },
 ]
@@ -340,7 +349,7 @@ function NavIcon({ id }: { id: View }) {
         <path d="M9 21V9" />
       </svg>
     )
-  if (id === 'live')
+  if (id === 'driver')
     return (
       <svg {...common}>
         <path d="M12 2v4" />
@@ -376,7 +385,19 @@ export default function App() {
   )
   const [stationQuery, setStationQuery] = useState('')
   const [currentFilter, setCurrentFilter] = useLocalStorage<Filter>('filter', 'all')
-  const [view, setView] = useLocalStorage<View>('view', 'timetable')
+  const [storedView, setView] = useLocalStorage<View>('view', 'timetable')
+  const view = migrateView(storedView)
+  // Steam64 id. Entered once, it identifies both the train the player is
+  // driving (TrainData.ControlledBySteamID) and the post they are dispatching
+  // (station DispatchedBy), so driver mode can target the right train on its
+  // own instead of making them hunt for it.
+  const [steamId, setSteamId] = useLocalStorage<string>('steamId', '')
+  const [driverTrainNo, setDriverTrainNo] = useLocalStorage<string>(
+    'driverTrain',
+    '',
+  )
+  const [showDriverPicker, setShowDriverPicker] = useState(false)
+  const [driverQuery, setDriverQuery] = useState('')
   const [serverCode, setServerCode] = useLocalStorage<string>('server', FALLBACK_SERVERS[0].code)
   const [searchQuery, setSearchQuery] = useState('')
   const [showStationModal, setShowStationModal] = useState(false)
@@ -410,7 +431,14 @@ export default function App() {
   const currentStation: DispatchStation =
     stations.find((s) => s.name === stationName) ??
     (stationsState.loading
-      ? { name: stationName, prefix: '', difficulty: 0, dispatchedBy: 0 }
+      ? {
+          name: stationName,
+          prefix: '',
+          difficulty: 0,
+          dispatchedBy: 0,
+          lat: null,
+          lon: null,
+        }
       : stations[0] ?? FALLBACK_STATIONS[0])
   const setCurrentStation = (s: DispatchStation) => setStationId(s.name)
 
@@ -435,11 +463,37 @@ export default function App() {
     () =>
       rawTrains.map((t) => {
         const tt = timetables.get(t.number)
-        return tt
+        const merged = tt
           ? applyTimetable(t, tt, currentStation.name, serverNowSec)
           : t
+        // Straight-line distance from the post. Replaces the 0 sentinel that
+        // made every live train read "At station".
+        if (
+          t.lat != null &&
+          t.lon != null &&
+          currentStation.lat != null &&
+          currentStation.lon != null
+        ) {
+          return {
+            ...merged,
+            distance: haversineKm(
+              t.lat,
+              t.lon,
+              currentStation.lat,
+              currentStation.lon,
+            ),
+          }
+        }
+        return merged
       }),
-    [rawTrains, timetables, currentStation.name, serverNowSec],
+    [
+      rawTrains,
+      timetables,
+      currentStation.name,
+      currentStation.lat,
+      currentStation.lon,
+      serverNowSec,
+    ],
   )
 
   // Only trains actually routed through this post. Without it the list is
@@ -476,6 +530,8 @@ export default function App() {
   // from wall time — comparing them against Date.now() would skew every ETA.
   const nowSec = serverNowSec ?? simNowSec
   const hasLiveTimetables = timetables.size > 0
+  // The mock set is the first-paint fallback; every API train carries `live`.
+  const hasLiveTrains = rawTrains.some((t) => t.live)
   // Boundary filtering cannot classify a train until its timetable lands, so
   // an empty list during that window means "still matching", not "no trains".
   // The pending counter alone misses the first render, before the fetch
@@ -493,6 +549,31 @@ export default function App() {
     }
     return false
   }, [timetables, currentStation.name])
+
+  // An explicit pick wins; otherwise fall back to whichever train this Steam
+  // id is driving. Both are looked up in the unfiltered live set, since the
+  // driver's train is usually nowhere near the dispatch post.
+  const driverTrain = useMemo(() => {
+    if (driverTrainNo) {
+      const picked = allTrains.find((t) => t.number === driverTrainNo)
+      if (picked) return picked
+    }
+    const id = steamId.trim()
+    if (id) return allTrains.find((t) => t.controlledBy === id) ?? null
+    return null
+  }, [allTrains, driverTrainNo, steamId])
+
+  const driverCandidates = useMemo(() => {
+    const q = driverQuery.trim().toLowerCase()
+    const pool = q
+      ? allTrains.filter(
+          (t) =>
+            t.number.toLowerCase().includes(q) ||
+            t.type.toLowerCase().includes(q),
+        )
+      : allTrains.filter((t) => t.driver === 'player')
+    return pool.slice(0, 60)
+  }, [allTrains, driverQuery])
 
   const visibleStations = useMemo(() => {
     const q = stationQuery.trim().toLowerCase()
@@ -760,6 +841,21 @@ export default function App() {
         </div>
       )}
 
+      {/* Sample data must announce itself. When the API is slow or down the
+          app falls back to the mock train set, which looks entirely
+          plausible — real-looking numbers, times and platforms. Planning
+          moves against invented trains is far worse than an empty screen. */}
+      {!hasLiveTrains && (
+        <div className="px-4 py-2 bg-amber-500/15 border-b border-amber-500/40 text-[11px] text-amber-300 flex items-center gap-2">
+          <span className="font-semibold">Sample data</span>
+          <span className="text-amber-200/80">
+            {trainsState.error
+              ? 'Live feed unreachable — these trains are not real.'
+              : 'Waiting for the live feed…'}
+          </span>
+        </div>
+      )}
+
       {/* The old "Posts mapped" legend lived here. It hardcoded Skierniewice's
           P/S/M posts, which is wrong for the other 60 stations now that the
           list comes from the API — and each row already names its own onward
@@ -890,6 +986,47 @@ export default function App() {
 
           <section>
             <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              Driver
+            </h2>
+            <div className="px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800">
+              <label
+                htmlFor="steamId"
+                className="block text-sm font-semibold text-white"
+              >
+                Your Steam ID
+              </label>
+              <p className="text-[11px] text-slate-400 mt-0.5 mb-2">
+                17-digit Steam64 id. Used only to spot which train you are
+                driving — it never leaves the device.
+              </p>
+              <input
+                id="steamId"
+                type="text"
+                inputMode="numeric"
+                value={steamId}
+                onChange={(e) => setSteamId(e.target.value)}
+                placeholder="76561198000000000"
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
+              />
+              {steamId.trim() && (
+                <p className="text-[11px] mt-1.5">
+                  {driverTrain && driverTrain.controlledBy === steamId.trim() ? (
+                    <span className="text-emerald-400">
+                      Matched train {driverTrain.number}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">
+                      No train on {currentServer.label} is being driven by this
+                      id right now.
+                    </span>
+                  )}
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
               Scope
             </h2>
             <button
@@ -951,10 +1088,43 @@ export default function App() {
         </main>
       )}
 
-      {(view === 'live' || view === 'map') && (
+      {view === 'driver' &&
+        (driverTrain ? (
+          <DriverView
+            train={driverTrain}
+            timetable={timetables.get(driverTrain.number)}
+            nowSec={serverNowSec}
+            onChangeTrain={() => setShowDriverPicker(true)}
+          />
+        ) : (
+          <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center pb-32">
+            <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4 text-2xl">
+              🚂
+            </div>
+            <h2 className="text-lg font-semibold text-white mb-1">
+              No train selected
+            </h2>
+            <p className="text-sm text-slate-400 max-w-xs mb-4">
+              {steamId.trim()
+                ? 'No train on this server is being driven by your Steam ID right now.'
+                : 'Add your Steam ID in Settings to pick up your train automatically, or choose one manually.'}
+            </p>
+            <button
+              onClick={() => {
+                hapticTap()
+                setShowDriverPicker(true)
+              }}
+              className="text-sm font-medium px-4 py-2 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/40"
+            >
+              Choose train
+            </button>
+          </main>
+        ))}
+
+      {view === 'map' && (
         <main className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center pb-32">
           <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-4 text-2xl">
-            {view === 'live' ? '📡' : '🗺'}
+            🗺
           </div>
           <h2 className="text-lg font-semibold text-white capitalize mb-1">
             {view}
@@ -963,6 +1133,98 @@ export default function App() {
             Coming in a later phase. Timetable is the working view for now.
           </p>
         </main>
+      )}
+
+      {/* Driver train picker */}
+      {showDriverPicker && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/70"
+            onClick={() => setShowDriverPicker(false)}
+          />
+          <div className="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-slate-900 rounded-t-2xl border-t border-slate-700 max-h-[75vh] overflow-hidden flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-800">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-semibold">Your train</h2>
+                <button
+                  onClick={() => setShowDriverPicker(false)}
+                  className="text-slate-400 p-1 text-lg"
+                >
+                  ✕
+                </button>
+              </div>
+              <input
+                type="search"
+                value={driverQuery}
+                onChange={(e) => setDriverQuery(e.target.value)}
+                placeholder="Search any train number…"
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
+              <p className="text-[11px] text-slate-500 mt-1.5">
+                {driverQuery.trim()
+                  ? 'All trains matching your search'
+                  : `${driverCandidates.length} player-driven train${driverCandidates.length === 1 ? '' : 's'} on this server`}
+              </p>
+            </div>
+            <div className="overflow-y-auto p-3 space-y-1.5">
+              {driverCandidates.length === 0 && (
+                <p className="text-center text-sm text-slate-500 py-8">
+                  No trains match
+                </p>
+              )}
+              {driverCandidates.map((t) => (
+                <button
+                  key={t.number}
+                  onClick={() => {
+                    hapticTap()
+                    setDriverTrainNo(t.number)
+                    setDriverQuery('')
+                    setShowDriverPicker(false)
+                  }}
+                  className={`w-full text-left px-3.5 py-2.5 rounded-xl flex items-center justify-between ${
+                    t.number === driverTrain?.number
+                      ? 'bg-sky-500/15 border border-sky-500/40'
+                      : 'border border-transparent hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono font-bold text-white">
+                      {t.number}
+                      <span
+                        className={`ml-2 text-[10px] font-sans px-1.5 py-0.5 rounded ${priorityChipCls(t.priority)}`}
+                      >
+                        {t.type}
+                      </span>
+                      {t.controlledBy && t.controlledBy === steamId.trim() && (
+                        <span className="ml-1.5 text-[10px] font-sans font-bold px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950">
+                          YOU
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-slate-400 truncate">
+                      {t.from} → {t.toPost}
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-slate-500 shrink-0 ml-2">
+                    {t.speed} km/h
+                  </span>
+                </button>
+              ))}
+              {driverTrainNo && (
+                <button
+                  onClick={() => {
+                    hapticTap()
+                    setDriverTrainNo('')
+                    setShowDriverPicker(false)
+                  }}
+                  className="w-full text-center text-[12px] text-slate-400 py-2"
+                >
+                  Clear manual pick — follow my Steam ID instead
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Install prompt for PWA */}

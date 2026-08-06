@@ -214,6 +214,14 @@ export default function TrainDetail({
                       : '—'}
                   </p>
                 </Vital>
+                <Vital label="From post">
+                  {/* Straight-line, not track distance — see lib/geo.ts. */}
+                  <p className="font-semibold mt-0.5 text-white">
+                    {train.distance > 0
+                      ? `${train.distance.toFixed(1)} km`
+                      : '—'}
+                  </p>
+                </Vital>
                 <Vital label="Destination">
                   <p className="font-semibold mt-0.5 text-white truncate">
                     {train.toPost}

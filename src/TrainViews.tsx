@@ -133,6 +133,11 @@ export function TrainRow({
             </span>
           )}
           <span className="ml-auto flex items-center gap-1.5 shrink-0">
+            {train.distance > 0 && (
+              <span className="text-[11px] text-slate-500 tabular-nums">
+                {train.distance.toFixed(1)}km
+              </span>
+            )}
             {train.live && (
               <>
                 <span className="text-[11px] text-slate-400 tabular-nums">
