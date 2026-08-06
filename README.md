@@ -24,9 +24,11 @@ prompt.
 
 ## What it does
 
+- **Every playable post** — all 61 dispatch posts on the server, searchable,
+  with difficulty and whether someone is already manning it.
 - **Boundary filtering** — only trains actually routed through your post, using
-  the timetable's `supervisedBy` field. A busy station is a dozen trains, not
-  the ~150 running server-wide.
+  the timetable's `supervisedBy` field. A busy station is a couple of dozen
+  trains, not the ~150 running server-wide.
 - **Real booked times** — arrival and departure at *your* post, platform and
   track, and the onward point plus line number.
 - **Live telemetry** — current speed, signal aspect, and distance to the next

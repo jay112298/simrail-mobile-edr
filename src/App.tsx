@@ -1,17 +1,18 @@
 import { useState, useMemo, useCallback } from 'react'
 import {
+  FALLBACK_STATIONS,
   REGION_LABEL,
+  legacyStationName,
   SERVERS as FALLBACK_SERVERS,
-  STATIONS,
   badgeClass,
   resolveDestination,
+  type DispatchStation,
   type Server,
   type ServerRegion,
-  type Station,
   type Train,
 } from './data'
 import { normalizeRegion } from './lib/api'
-import { useServers, useTrains } from './lib/useLive'
+import { useServers, useStations, useTrains } from './lib/useLive'
 import {
   computeETASec,
   detectConflicts,
@@ -368,7 +369,12 @@ function NavIcon({ id }: { id: View }) {
 }
 
 export default function App() {
-  const [stationId, setStationId] = useLocalStorage<string>('station', STATIONS[0].id)
+  // Stored as the station *name*, since that is the key trains are matched on.
+  const [stationId, setStationId] = useLocalStorage<string>(
+    'station',
+    FALLBACK_STATIONS[0].name,
+  )
+  const [stationQuery, setStationQuery] = useState('')
   const [currentFilter, setCurrentFilter] = useLocalStorage<Filter>('filter', 'all')
   const [view, setView] = useLocalStorage<View>('view', 'timetable')
   const [serverCode, setServerCode] = useLocalStorage<string>('server', FALLBACK_SERVERS[0].code)
@@ -380,10 +386,6 @@ export default function App() {
   const [density, setDensity] = useLocalStorage<Density>('density', 'rows')
   // Fallback clock for the mock dataset; live data uses the in-game clock.
   const simNowSec = useSimNow()
-
-  const currentStation: Station =
-    STATIONS.find((s) => s.id === stationId) ?? STATIONS[0]
-  const setCurrentStation = (s: Station) => setStationId(s.id)
 
   const serversState = useServers()
   const servers = serversState.data
@@ -397,6 +399,20 @@ export default function App() {
     (serversState.loading
       ? { code: serverCode, region: normalizeRegion(serverCode), label: serverCode.toUpperCase() }
       : servers[0] ?? FALLBACK_SERVERS[0])
+
+  // Stations are per-server, so this has to follow currentServer.
+  const stationsState = useStations(currentServer.code)
+  const stations = stationsState.data
+  // Same rule as the server picker: honour the stored post while the live
+  // list loads, so a post absent from the fallback does not briefly render
+  // (and scope trains to) the wrong one.
+  const stationName = legacyStationName(stationId) ?? stationId
+  const currentStation: DispatchStation =
+    stations.find((s) => s.name === stationName) ??
+    (stationsState.loading
+      ? { name: stationName, prefix: '', difficulty: 0, dispatchedBy: 0 }
+      : stations[0] ?? FALLBACK_STATIONS[0])
+  const setCurrentStation = (s: DispatchStation) => setStationId(s.name)
 
   const trainsState = useTrains(currentServer.code)
   const rawTrains = trainsState.data
@@ -467,6 +483,26 @@ export default function App() {
   const matchingInProgress =
     timetablePending > 0 ||
     (boundaryOnly && liveTrainNos.length > 0 && timetables.size === 0)
+
+  // Seven of the 61 playable posts are named differently in the timetable
+  // (they appear to be sub-posts controlled under a parent). Those show an
+  // empty list forever, which reads as a broken app unless we say why.
+  const postNamedInTimetables = useMemo(() => {
+    for (const tt of timetables.values()) {
+      if (passesPost(tt, currentStation.name)) return true
+    }
+    return false
+  }, [timetables, currentStation.name])
+
+  const visibleStations = useMemo(() => {
+    const q = stationQuery.trim().toLowerCase()
+    if (!q) return stations
+    return stations.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.prefix.toLowerCase().includes(q),
+    )
+  }, [stations, stationQuery])
 
   const conflicts = useMemo(() => detectConflicts(trains), [trains])
 
@@ -724,28 +760,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Legend for multi-post stations. Redundant once real timetables are
-          in — each row names its onward point and line — and the space is
-          better spent on another train. */}
-      {currentStation.multiPost && !hasLiveTimetables && (
-        <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-800 text-[11px]">
-          <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">
-            <span className="text-slate-400 font-medium">Posts mapped:</span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-full badge-p" />
-              <b>P</b> → Płyćwia / Łowicz
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-full badge-s" />
-              <b>S</b> → Platforms
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-full badge-m" />
-              <b>M</b> → Koluszki / Żyrardów
-            </span>
-          </div>
-        </div>
-      )}
+      {/* The old "Posts mapped" legend lived here. It hardcoded Skierniewice's
+          P/S/M posts, which is wrong for the other 60 stations now that the
+          list comes from the API — and each row already names its own onward
+          point and line. */}
 
         </>
       )}
@@ -763,8 +781,19 @@ export default function App() {
               <p className="text-sm">
                 {matchingInProgress
                   ? 'Matching trains to this post…'
+                  : boundaryOnly && !postNamedInTimetables && hasLiveTimetables
+                  ? `No booked train names ${currentStation.name} as its controlling post`
                   : 'No trains match the current filter'}
               </p>
+              {!matchingInProgress &&
+                boundaryOnly &&
+                !postNamedInTimetables &&
+                hasLiveTimetables && (
+                  <p className="text-xs text-slate-600 max-w-xs mx-auto">
+                    It may be a sub-post controlled under a parent station.
+                    Turn off “This post only” to see every train on the server.
+                  </p>
+                )}
               {matchingInProgress ? (
                 <p className="text-xs text-slate-600">
                   {timetablePending} timetable
@@ -982,50 +1011,78 @@ export default function App() {
             onClick={() => setShowStationModal(false)}
           />
           <div className="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-slate-900 rounded-t-2xl border-t border-slate-700 max-h-[70vh] overflow-hidden flex flex-col">
-            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-              <h2 className="font-semibold">Select Station</h2>
-              <button
-                onClick={() => setShowStationModal(false)}
-                className="text-slate-400 p-1 text-lg"
-              >
-                ✕
-              </button>
+            <div className="px-4 py-3 border-b border-slate-800">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-semibold">
+                  Select Station{' '}
+                  <span className="text-[11px] font-normal text-slate-500">
+                    {stations.length} posts
+                  </span>
+                </h2>
+                <button
+                  onClick={() => setShowStationModal(false)}
+                  className="text-slate-400 p-1 text-lg"
+                >
+                  ✕
+                </button>
+              </div>
+              {/* 61 posts is too many to scroll blind. */}
+              <input
+                type="search"
+                value={stationQuery}
+                onChange={(e) => setStationQuery(e.target.value)}
+                placeholder="Search station…"
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-sky-500"
+              />
             </div>
             <div className="overflow-y-auto p-3 space-y-1.5">
-              {STATIONS.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    hapticTap()
-                    setCurrentStation(s)
-                    setShowStationModal(false)
-                  }}
-                  className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center justify-between ${
-                    s.id === currentStation.id
-                      ? 'bg-sky-500/15 border border-sky-500/40'
-                      : 'hover:bg-slate-800 border border-transparent'
-                  }`}
-                >
-                  <div>
-                    <p
-                      className={`font-medium ${
-                        s.id === currentStation.id
-                          ? 'text-sky-400'
-                          : 'text-white'
-                      }`}
-                    >
-                      {s.name}
-                    </p>
-                    <p className="text-[11px] text-slate-400">
-                      Difficulty {s.difficulty}/5
-                      {s.multiPost ? ' · Multi-post' : ''}
-                    </p>
-                  </div>
-                  {s.id === currentStation.id && (
-                    <span className="text-sky-400 text-sm">✓</span>
-                  )}
-                </button>
-              ))}
+              {visibleStations.length === 0 && (
+                <p className="text-center text-sm text-slate-500 py-8">
+                  No station matches “{stationQuery}”
+                </p>
+              )}
+              {visibleStations.map((s) => {
+                const active = s.name === currentStation.name
+                return (
+                  <button
+                    key={s.name}
+                    onClick={() => {
+                      hapticTap()
+                      setCurrentStation(s)
+                      setStationQuery('')
+                      setShowStationModal(false)
+                    }}
+                    className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center justify-between ${
+                      active
+                        ? 'bg-sky-500/15 border border-sky-500/40'
+                        : 'hover:bg-slate-800 border border-transparent'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`font-medium ${active ? 'text-sky-400' : 'text-white'}`}
+                      >
+                        {s.name}
+                        {s.prefix && (
+                          <span className="ml-1.5 text-[11px] font-mono text-slate-500">
+                            {s.prefix}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Difficulty {s.difficulty}/5
+                        {s.dispatchedBy > 0 && (
+                          <span className="text-emerald-400">
+                            {' '}
+                            · manned by {s.dispatchedBy}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    {active && <span className="text-sky-400 text-sm">✓</span>}
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>
