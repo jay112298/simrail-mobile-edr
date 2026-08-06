@@ -42,6 +42,16 @@ import TrainDetail from './TrainDetail'
 import DriverView from './DriverView'
 import SchematicMap from './SchematicMap'
 import buildInfo from './build-info.json'
+import {
+  ALERT_HINT,
+  ALERT_LABEL,
+  DEFAULT_ALERT_SETTINGS,
+  tonesFor,
+  type AlertKind,
+  type AlertSettings,
+} from './lib/alerts'
+import { useAlerts, useWakeLock } from './lib/useAlerts'
+import { playTones, unlockAudio, vibrate } from './lib/sound'
 
 type Filter = 'all' | 'player' | 'passenger' | 'freight' | 'delayed' | 'approaching'
 // "live" was a stub and is redundant now that the timetable carries live
@@ -624,6 +634,30 @@ export default function App() {
     return seen.size
   }, [conflicts])
 
+  // Alerts watch every train at the post, not the filtered view — muting a
+  // category in the list must not mute the problems it contains.
+  const [alertSettings, setAlertSettings] = useLocalStorage<AlertSettings>(
+    'alerts',
+    DEFAULT_ALERT_SETTINGS,
+  )
+  const [keepAwake, setKeepAwake] = useLocalStorage<boolean>('keepAwake', false)
+  const { supported: wakeLockSupported } = useWakeLock(keepAwake)
+  const { log: alertLog, clearLog } = useAlerts(
+    trains,
+    conflicts,
+    serverNowSec,
+    alertSettings,
+    // Only start sounding once live trains are in and their timetables have
+    // finished arriving — otherwise every restart alerts on the whole board.
+    hasLiveTrains && timetablePending === 0 && serverNowSec !== null,
+  )
+
+  const setAlertKind = (kind: AlertKind, on: boolean) =>
+    setAlertSettings({
+      ...alertSettings,
+      kinds: { ...alertSettings.kinds, [kind]: on },
+    })
+
   const filteredTrains = useMemo(() => {
     const filtered = trains.filter((t) => {
       if (currentFilter === 'player' && t.driver !== 'player') return false
@@ -993,6 +1027,215 @@ export default function App() {
                 </button>
               ))}
             </div>
+          </section>
+
+          <section>
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              Alerts
+            </h2>
+            <button
+              onClick={async () => {
+                hapticTap()
+                const turningOn = !alertSettings.enabled
+                // Browsers keep audio suspended until a gesture; this tap is
+                // that gesture, so unlock here or nothing plays later.
+                if (turningOn) await unlockAudio()
+                setAlertSettings({ ...alertSettings, enabled: turningOn })
+              }}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 mb-2"
+            >
+              <span className="text-left">
+                <span className="block text-sm font-semibold text-white">
+                  Audio alerts
+                </span>
+                <span className="block text-[11px] text-slate-400 mt-0.5">
+                  Sound and vibrate when something needs you
+                </span>
+              </span>
+              <span
+                className={`w-11 h-6 rounded-full p-0.5 shrink-0 transition-colors ${
+                  alertSettings.enabled ? 'bg-sky-500' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`block w-5 h-5 rounded-full bg-white transition-transform ${
+                    alertSettings.enabled ? 'translate-x-5' : ''
+                  }`}
+                />
+              </span>
+            </button>
+
+            {alertSettings.enabled && (
+              <div className="space-y-2">
+                <div className="px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                  <label
+                    htmlFor="lead"
+                    className="flex items-center justify-between text-sm font-semibold text-white"
+                  >
+                    Approach warning
+                    <span className="font-mono text-sky-300">
+                      {alertSettings.leadMinutes} min
+                    </span>
+                  </label>
+                  <input
+                    id="lead"
+                    type="range"
+                    min={1}
+                    max={15}
+                    step={1}
+                    value={alertSettings.leadMinutes}
+                    onChange={(e) =>
+                      setAlertSettings({
+                        ...alertSettings,
+                        leadMinutes: Number(e.target.value),
+                      })
+                    }
+                    className="w-full mt-2 accent-sky-500"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    How long before booked arrival to warn you.
+                  </p>
+                </div>
+
+                <div className="px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                  <label
+                    htmlFor="vol"
+                    className="flex items-center justify-between text-sm font-semibold text-white"
+                  >
+                    Volume
+                    <span className="font-mono text-sky-300">
+                      {Math.round(alertSettings.volume * 100)}%
+                    </span>
+                  </label>
+                  <input
+                    id="vol"
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={alertSettings.volume * 100}
+                    onChange={(e) =>
+                      setAlertSettings({
+                        ...alertSettings,
+                        volume: Number(e.target.value) / 100,
+                      })
+                    }
+                    className="w-full mt-2 accent-sky-500"
+                  />
+                </div>
+
+                {(Object.keys(ALERT_LABEL) as AlertKind[]).map((kind) => (
+                  <div
+                    key={kind}
+                    className="px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-start gap-2"
+                  >
+                    <button
+                      onClick={() => {
+                        hapticTap()
+                        setAlertKind(kind, !alertSettings.kinds[kind])
+                      }}
+                      className="flex-1 text-left"
+                    >
+                      <span className="block text-sm font-semibold text-white">
+                        {ALERT_LABEL[kind]}
+                      </span>
+                      <span className="block text-[11px] text-slate-400 mt-0.5">
+                        {ALERT_HINT[kind]}
+                      </span>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={async () => {
+                          await unlockAudio()
+                          playTones(tonesFor(kind), alertSettings.volume)
+                          vibrate(30)
+                        }}
+                        className="text-[11px] text-sky-400 px-2 py-1 rounded-lg border border-sky-500/40"
+                      >
+                        Play
+                      </button>
+                      <span
+                        onClick={() => setAlertKind(kind, !alertSettings.kinds[kind])}
+                        className={`w-9 h-5 rounded-full p-0.5 transition-colors ${
+                          alertSettings.kinds[kind]
+                            ? 'bg-sky-500'
+                            : 'bg-slate-700'
+                        }`}
+                      >
+                        <span
+                          className={`block w-4 h-4 rounded-full bg-white transition-transform ${
+                            alertSettings.kinds[kind] ? 'translate-x-4' : ''
+                          }`}
+                        />
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                hapticTap()
+                setKeepAwake(!keepAwake)
+              }}
+              disabled={!wakeLockSupported}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 mt-2 disabled:opacity-50"
+            >
+              <span className="text-left">
+                <span className="block text-sm font-semibold text-white">
+                  Keep screen awake
+                </span>
+                <span className="block text-[11px] text-slate-400 mt-0.5">
+                  {wakeLockSupported
+                    ? 'Stops the phone sleeping mid-shift'
+                    : 'Not supported on this device'}
+                </span>
+              </span>
+              <span
+                className={`w-11 h-6 rounded-full p-0.5 shrink-0 transition-colors ${
+                  keepAwake ? 'bg-sky-500' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`block w-5 h-5 rounded-full bg-white transition-transform ${
+                    keepAwake ? 'translate-x-5' : ''
+                  }`}
+                />
+              </span>
+            </button>
+
+            {alertLog.length > 0 && (
+              <div className="mt-2 px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+                    Recent
+                  </span>
+                  <button
+                    onClick={clearLog}
+                    className="text-[11px] text-slate-400"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <ul className="space-y-1 max-h-48 overflow-y-auto">
+                  {alertLog.map((a) => (
+                    <li
+                      key={`${a.key}-${a.at}`}
+                      className="text-[11px] flex items-baseline gap-2"
+                    >
+                      <span className="font-mono text-slate-500 shrink-0">
+                        {new Date(a.at).toLocaleTimeString(undefined, {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                      <span className="text-slate-300">{a.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
 
           <section>

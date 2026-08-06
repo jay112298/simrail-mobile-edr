@@ -56,6 +56,11 @@ breaks the loop permanently.
 - **Line schematic** — every train within 25 km of your post, plotted by
   kilometre post on each line through it, with direction of travel and signal
   aspect. Pure SVG: no tile server, no dependency, works offline.
+- **Audio alerts** — approach warning, player train inbound, new platform
+  conflict, train held at a red signal, overdue departure. Each has a distinct
+  tone and vibration so it is recognisable without looking. Per-alert toggles,
+  adjustable lead time and volume, and a log of what fired.
+- **Keep screen awake** — for a phone propped up beside the game.
 - **Platform conflict detection** — overlapping occupation windows on the same
   platform are flagged on both trains.
 - **Three list densities** — switchable in Settings and remembered, because a

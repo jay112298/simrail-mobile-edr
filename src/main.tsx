@@ -39,9 +39,12 @@ async function purgeServiceWorkers() {
 
 if (Capacitor.isNativePlatform()) {
   void purgeServiceWorkers()
-} else if ('serviceWorker' in navigator) {
+} else if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   // Browser builds keep offline support; registration is manual because the
   // plugin's auto-injected script cannot tell native from browser.
+  //
+  // Production only: the dev server has no /sw.js, so the SPA fallback hands
+  // back index.html and registration fails on the MIME type.
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js', { scope: '/' })
   })
