@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: #020617;
+  overscroll-behavior: none;
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.card-press:active {
+  transform: scale(0.98);
+}
+
+.scroll-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.delay-early { color: #22c55e; }
+.delay-late { color: #ef4444; }
+.delay-ontime { color: #94a3b8; }
+
+.badge-p { background: #3b82f6; }
+.badge-s { background: #8b5cf6; }
+.badge-m { background: #ec4899; }
+
+.dest-plycwia { border-left-color: #22c55e; }
+.dest-zyrardow { border-left-color: #38bdf8; }
+.dest-koluszki { border-left-color: #f59e0b; }
+.dest-other { border-left-color: #64748b; }
+
+/* Install prompt entrance */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation: slideUp 0.3s ease-out;
+}
+
+/* Better touch scrolling on iOS */
+main {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent text selection while interacting with cards */
+.card-press {
+  user-select: none;
+  -webkit-user-select: none;
+}

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="96" fill="#0f172a"/>
+  <rect x="32" y="32" width="448" height="448" rx="80" fill="#1e293b"/>
+  <!-- Track -->
+  <rect x="80" y="340" width="352" height="28" rx="4" fill="#334155"/>
+  <rect x="80" y="380" width="352" height="12" rx="2" fill="#475569"/>
+  <!-- Train body -->
+  <rect x="140" y="200" width="232" height="140" rx="20" fill="#38bdf8"/>
+  <rect x="160" y="220" width="80" height="50" rx="8" fill="#0f172a"/>
+  <rect x="270" y="220" width="80" height="50" rx="8" fill="#0f172a"/>
+  <!-- Front -->
+  <path d="M372 200 L420 270 L420 340 L372 340 Z" fill="#0ea5e9"/>
+  <!-- Wheels -->
+  <circle cx="190" cy="360" r="28" fill="#1e293b" stroke="#38bdf8" stroke-width="8"/>
+  <circle cx="320" cy="360" r="28" fill="#1e293b" stroke="#38bdf8" stroke-width="8"/>
+  <!-- Signal light -->
+  <circle cx="400" cy="250" r="14" fill="#22c55e"/>
+</svg>
