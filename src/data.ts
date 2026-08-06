@@ -642,3 +642,52 @@ export const TRAINS: Train[] = [
     ],
   },
 ]
+
+// Deterministic per-server view of the mock TRAINS list.
+// Each server gets a stable subset + a stable delay jitter so switching
+// servers produces a visibly different (but reproducible) timetable.
+// Phase 4 will replace this with a live fetch to the SimRail API.
+function hashCode(s: string): number {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+export function trainsForServer(code: string): Train[] {
+  const seed = hashCode(code)
+  // Rank each train by a stable per-server hash — lowest ranks are kept.
+  const ranked = TRAINS.map((t, i) => ({
+    t,
+    i,
+    rank: hashCode(code + ':' + t.number),
+  })).sort((a, b) => a.rank - b.rank)
+
+  // How many trains this server carries. PL1 = flagship (all). Others vary.
+  const min = 4
+  const max = TRAINS.length
+  const keep =
+    code === 'pl1' ? max : min + (seed % (max - min + 1))
+
+  return ranked.slice(0, keep).map(({ t, i }) => {
+    const jitter = ((hashCode(code + ':d:' + t.number) % 7) - 3) // -3..+3
+    const newDelay = Math.max(-3, t.delay + jitter)
+    return {
+      ...t,
+      delay: newDelay,
+      // Give some variance to speed too so live view feels alive per-server.
+      speed:
+        t.status === 'standing'
+          ? 0
+          : Math.max(
+              0,
+              Math.min(
+                t.maxSpeed,
+                t.speed + (((seed + i) % 21) - 10),
+              ),
+            ),
+    }
+  })
+}
