@@ -165,7 +165,7 @@ const CLASS_PRIORITY: Record<string, number> = {
   TPE: 6,
 }
 
-function classifyTrain(name: string, trainNo: string): { type: string; priority: number; category: Category } {
+export function classifyTrain(name: string, trainNo: string): { type: string; priority: number; category: Category } {
   // Try each token in the name against the priority map.
   const tokens = name.toUpperCase().split(/[^A-Z]+/).filter(Boolean)
   for (const tok of tokens) {

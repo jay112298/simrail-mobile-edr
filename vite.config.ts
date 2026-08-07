@@ -11,7 +11,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/simrail-timetable': {
-        target: 'https://api1.aws.simrail.eu:8082',
+        // Same host the official EDR backend uses.
+        target: 'https://api.simrail.eu:8082',
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/simrail-timetable/, '/api'),

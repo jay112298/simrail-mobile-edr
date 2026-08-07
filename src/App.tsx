@@ -20,11 +20,14 @@ import {
   detectConflicts,
   etaLabel,
   etaUrgency,
+  hhmmToSec,
   sortByETA,
   useSimNow,
 } from './lib/dispatch'
-import { useServerTime, useTimetables } from './lib/useTimetable'
-import { applyTimetable, passesPost } from './lib/enrich'
+import { useServerTime } from './lib/useTimetable'
+import { rowToTrain } from './lib/enrich'
+import { useEdrTimetable } from './lib/useEdrTimetable'
+import { rowsForStation, wrapDiff, type EdrTrain } from './lib/edrTimetable'
 import { TrainRow, TrainTable } from './TrainViews'
 import {
   SIGNAL_BADGE,
@@ -462,72 +465,83 @@ export default function App() {
   // on train number so cards can show booked times, platform and onward route
   // rather than telemetry alone.
   const serverNowSec = useServerTime(currentServer.code)
-  const liveTrainNos = useMemo(
-    () => rawTrains.filter((t) => t.live).map((t) => t.number),
-    [rawTrains],
-  )
-  const {
-    timetables,
-    pending: timetablePending,
-    unresolved: timetableUnresolved,
-  } = useTimetables(currentServer.code, liveTrainNos)
+  // The whole server schedule, fetched once and cached. Rows for this station
+  // are derived from it; /trains-open only supplies live decoration.
+  const edr = useEdrTimetable(currentServer.code)
 
-  const allTrains = useMemo(
-    () =>
-      rawTrains.map((t) => {
-        const tt = timetables.get(t.number)
-        const merged = tt
-          ? applyTimetable(t, tt, currentStation.name, serverNowSec)
+  // Live telemetry, keyed by train number, to decorate schedule rows.
+  const liveByNumber = useMemo(() => {
+    const map = new Map<string, Train>()
+    for (const t of rawTrains) {
+      if (!t.live) continue
+      const withDistance =
+        t.lat != null &&
+        t.lon != null &&
+        currentStation.lat != null &&
+        currentStation.lon != null
+          ? {
+              ...t,
+              distance: haversineKm(
+                t.lat,
+                t.lon,
+                currentStation.lat,
+                currentStation.lon,
+              ),
+            }
           : t
-        // Straight-line distance from the post. Replaces the 0 sentinel that
-        // made every live train read "At station".
-        if (
-          t.lat != null &&
-          t.lon != null &&
-          currentStation.lat != null &&
-          currentStation.lon != null
-        ) {
-          return {
-            ...merged,
-            distance: haversineKm(
-              t.lat,
-              t.lon,
-              currentStation.lat,
-              currentStation.lon,
-            ),
-          }
-        }
-        return merged
-      }),
-    [
-      rawTrains,
-      timetables,
-      currentStation.name,
-      currentStation.lat,
-      currentStation.lon,
-      serverNowSec,
-    ],
+      map.set(t.number, withDistance)
+    }
+    return map
+  }, [rawTrains, currentStation.lat, currentStation.lon])
+
+  // The station's own point ids. Matching numerically avoids comparing Polish
+  // station names with diacritics, and is how the official EDR does it.
+  const stationPointIds = useMemo(
+    () => edr.pointIndex.get(currentStation.name) ?? new Set<string>(),
+    [edr.pointIndex, currentStation.name],
   )
 
-  // Only trains actually routed through this post. Without it the list is
-  // every train on the server, which is useless for dispatching one station.
-  const [boundaryOnly, setBoundaryOnly] = useLocalStorage<boolean>(
-    'boundaryOnly',
-    true,
+  /**
+   * Every train booked through this station, decorated with live data where
+   * the train is actually running.
+   *
+   * This is the timetable, not a view of traffic: previously the list was
+   * built from spawned trains and filtered, so a post showed only the handful
+   * currently running (41 of 487 booked through Skierniewice on one sample).
+   */
+  const allTrains = useMemo(() => {
+    // Until the schedule is in there is nothing honest to show. Listing every
+    // live train on the server instead would fill the screen with trains that
+    // are nowhere near this post — the opposite failure to showing too few.
+    if (edr.trains.length === 0 || stationPointIds.size === 0) return []
+    return rowsForStation(edr.trains, stationPointIds).map((row) =>
+      rowToTrain(row, liveByNumber.get(row.train.trainNo), serverNowSec),
+    )
+  }, [edr.trains, stationPointIds, liveByNumber, serverNowSec])
+
+  // Opt-in narrowing. The default is the whole booked timetable, matching the
+  // official EDR — restricting to running trains is a view, not the truth.
+  const [onlyOnTrack, setOnlyOnTrack] = useLocalStorage<boolean>(
+    'onlyOnTrack',
+    false,
   )
+  const [windowHours, setWindowHours] = useLocalStorage<number>('windowHours', 2)
+
   const trains = useMemo(() => {
-    if (!boundaryOnly) return allTrains
-    return allTrains.filter((t) => {
-      // Mock trains are already scoped to the post; live ones need their
-      // timetable before we can tell, so they appear as it resolves.
-      if (!t.live) return true
-      const tt = timetables.get(t.number)
-      if (!tt || !passesPost(tt, currentStation.name)) return false
-      // Trains that have already worked past this post are no longer
-      // dispatchable here and would just crowd the list.
-      return !t.clearedPost
-    })
-  }, [allTrains, boundaryOnly, timetables, currentStation.name])
+    let rows = allTrains
+    if (onlyOnTrack) rows = rows.filter((t) => t.live)
+    if (windowHours > 0 && serverNowSec !== null) {
+      const span = windowHours * 3600
+      rows = rows.filter((t) => {
+        const arr = hhmmToSec(t.arrival) ?? hhmmToSec(t.departure)
+        if (arr === null) return true
+        const d = wrapDiff(arr, serverNowSec)
+        // Keep a little history so a train that just cleared is still visible.
+        return d > -30 * 60 && d < span
+      })
+    }
+    return rows
+  }, [allTrains, onlyOnTrack, windowHours, serverNowSec])
 
   const serversByRegion = useMemo(() => {
     const groups = new Map<ServerRegion, Server[]>()
@@ -542,26 +556,21 @@ export default function App() {
   // Scheduled times come from the in-game clock, which runs on its own offset
   // from wall time — comparing them against Date.now() would skew every ETA.
   const nowSec = serverNowSec ?? simNowSec
-  const hasLiveTimetables = timetables.size > 0
+  const hasLiveTimetables = edr.trains.length > 0
   // The mock set is the first-paint fallback; every API train carries `live`.
   const hasLiveTrains = rawTrains.some((t) => t.live)
-  // Boundary filtering cannot classify a train until its timetable lands, so
-  // an empty list during that window means "still matching", not "no trains".
-  // The pending counter alone misses the first render, before the fetch
-  // effect has run.
-  const matchingInProgress =
-    timetablePending > 0 ||
-    (boundaryOnly && liveTrainNos.length > 0 && timetables.size === 0)
+  // The schedule is one request, so "loading" is simply that request.
+  const matchingInProgress = edr.loading
 
-  // Seven of the 61 playable posts are named differently in the timetable
-  // (they appear to be sub-posts controlled under a parent). Those show an
-  // empty list forever, which reads as a broken app unless we say why.
-  const postNamedInTimetables = useMemo(() => {
-    for (const tt of timetables.values()) {
-      if (passesPost(tt, currentStation.name)) return true
-    }
-    return false
-  }, [timetables, currentStation.name])
+  // A post the schedule never names has no rows, which reads as a broken app
+  // unless we say so.
+  const postNamedInTimetables = stationPointIds.size > 0
+
+  const edrByNo = useMemo(() => {
+    const map = new Map<string, EdrTrain>()
+    for (const t of edr.trains) map.set(t.trainNo, t)
+    return map
+  }, [edr.trains])
 
   // An explicit pick wins; otherwise fall back to whichever train this Steam
   // id is driving. Both are looked up in the unfiltered live set, since the
@@ -592,8 +601,8 @@ export default function App() {
   // that hides trains because of a category filter would misrepresent the
   // line.
   const schematicLines = useMemo(
-    () => buildSchematic(trains, timetables, currentStation.name, serverNowSec),
-    [trains, timetables, currentStation.name, serverNowSec],
+    () => buildSchematic(trains, edrByNo, stationPointIds, serverNowSec),
+    [trains, edrByNo, stationPointIds, serverNowSec],
   )
 
   const visibleStations = useMemo(() => {
@@ -647,9 +656,9 @@ export default function App() {
     conflicts,
     serverNowSec,
     alertSettings,
-    // Only start sounding once live trains are in and their timetables have
-    // finished arriving — otherwise every restart alerts on the whole board.
-    hasLiveTrains && timetablePending === 0 && serverNowSec !== null,
+    // Only start sounding once the schedule and live positions are both in —
+    // otherwise every restart alerts on the whole board.
+    hasLiveTrains && !edr.loading && serverNowSec !== null,
   )
 
   const setAlertKind = (kind: AlertKind, on: boolean) =>
@@ -921,35 +930,48 @@ export default function App() {
             <div className="text-center py-16 text-slate-500 space-y-3">
               <p className="text-sm">
                 {matchingInProgress
-                  ? 'Matching trains to this post…'
-                  : boundaryOnly && !postNamedInTimetables && hasLiveTimetables
-                  ? `No booked train names ${currentStation.name} as its controlling post`
+                  ? 'Loading the server timetable…'
+                  : edr.error !== null
+                  ? 'Could not load the server timetable'
+                  : !postNamedInTimetables && hasLiveTimetables
+                  ? `${currentStation.name} does not appear in the server timetable`
                   : 'No trains match the current filter'}
               </p>
               {!matchingInProgress &&
-                boundaryOnly &&
                 !postNamedInTimetables &&
+                edr.error === null &&
                 hasLiveTimetables && (
                   <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                    It may be a sub-post controlled under a parent station.
-                    Turn off “This post only” to see every train on the server.
+                    No booked train stops at this point. It may be a sub-post
+                    worked under a parent station — try that one instead.
                   </p>
                 )}
               {matchingInProgress ? (
                 <p className="text-xs text-slate-600">
-                  {timetablePending} timetable
-                  {timetablePending === 1 ? '' : 's'} still loading
+                  The whole server's schedule downloads once, then is cached —
+                  the first load can take a minute.
                 </p>
+              ) : edr.error !== null ? (
+                <button
+                  onClick={() => {
+                    hapticTap()
+                    edr.refresh()
+                  }}
+                  className="text-xs font-medium px-3 py-1.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/40"
+                >
+                  Retry
+                </button>
               ) : (
                 <button
                   onClick={() => {
                     setCurrentFilter('all')
                     setSearchQuery('')
-                    setBoundaryOnly(false)
+                    setOnlyOnTrack(false)
+                    setWindowHours(0)
                   }}
                   className="text-xs font-medium px-3 py-1.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/40"
                 >
-                  Clear filter
+                  Clear filters
                 </button>
               )}
             </div>
@@ -1283,33 +1305,63 @@ export default function App() {
             <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
               Scope
             </h2>
+            {/* The list is the station's booked timetable. These narrow it;
+                neither is on by default, because hiding booked trains is a
+                view, not the truth. */}
             <button
               onClick={() => {
                 hapticTap()
-                setBoundaryOnly(!boundaryOnly)
+                setOnlyOnTrack(!onlyOnTrack)
               }}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800"
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800 mb-2"
             >
               <span className="text-left">
                 <span className="block text-sm font-semibold text-white">
-                  This post only
+                  Running trains only
                 </span>
                 <span className="block text-[11px] text-slate-400 mt-0.5">
-                  Show only trains routed through {currentStation.name}
+                  Hide trains that have not spawned yet
                 </span>
               </span>
               <span
                 className={`w-11 h-6 rounded-full p-0.5 shrink-0 transition-colors ${
-                  boundaryOnly ? 'bg-sky-500' : 'bg-slate-700'
+                  onlyOnTrack ? 'bg-sky-500' : 'bg-slate-700'
                 }`}
               >
                 <span
                   className={`block w-5 h-5 rounded-full bg-white transition-transform ${
-                    boundaryOnly ? 'translate-x-5' : ''
+                    onlyOnTrack ? 'translate-x-5' : ''
                   }`}
                 />
               </span>
             </button>
+
+            <div className="px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-800">
+              <label
+                htmlFor="window"
+                className="flex items-center justify-between text-sm font-semibold text-white"
+              >
+                Time window
+                <span className="font-mono text-sky-300">
+                  {windowHours === 0 ? 'whole day' : `${windowHours} h ahead`}
+                </span>
+              </label>
+              <input
+                id="window"
+                type="range"
+                min={0}
+                max={12}
+                step={1}
+                value={windowHours}
+                onChange={(e) => setWindowHours(Number(e.target.value))}
+                className="w-full mt-2 accent-sky-500"
+              />
+              <p className="text-[11px] text-slate-400">
+                {stationPointIds.size > 0
+                  ? `${allTrains.length} booked through ${currentStation.name} today · ${trains.length} shown`
+                  : 'Waiting for the timetable'}
+              </p>
+            </div>
           </section>
 
           <section className="text-[11px] text-slate-500 space-y-1">
@@ -1347,17 +1399,28 @@ export default function App() {
               </span>
             </p>
             <p>
-              Timetables cached:{' '}
-              <span className="font-mono text-slate-300">{timetables.size}</span>
-              {timetablePending > 0 && ` · ${timetablePending} loading`}
+              Server timetable:{' '}
+              <span className="font-mono text-slate-300">
+                {edr.loading ? 'loading…' : `${edr.trains.length} trains`}
+              </span>
+              {edr.fetchedAt !== null &&
+                ` · ${new Date(edr.fetchedAt).toLocaleTimeString(undefined, {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}`}
             </p>
-            {timetableUnresolved > 0 && (
-              <p className="text-amber-400">
-                {timetableUnresolved} train
-                {timetableUnresolved === 1 ? '' : 's'} have no timetable after{' '}
-                retries — hidden while “This post only” is on.
-              </p>
+            {edr.error !== null && (
+              <p className="text-amber-400">Timetable error: {edr.error}</p>
             )}
+            <button
+              onClick={() => {
+                hapticTap()
+                edr.refresh()
+              }}
+              className="text-[11px] text-sky-400 px-2 py-1 rounded-lg border border-sky-500/40 mt-1"
+            >
+              Reload timetable
+            </button>
           </section>
         </main>
       )}
@@ -1366,7 +1429,7 @@ export default function App() {
         (driverTrain ? (
           <DriverView
             train={driverTrain}
-            timetable={timetables.get(driverTrain.number)}
+            timetable={edrByNo.get(driverTrain.number)}
             nowSec={serverNowSec}
             onChangeTrain={() => setShowDriverPicker(true)}
           />

@@ -13,7 +13,7 @@
 
 import type { Train } from '../data'
 import { wrapDiffSec } from './enrich'
-import type { TrainTimetable } from './timetable'
+import type { EdrTrain } from './edrTimetable'
 
 /** How far either side of the post the diagram reaches. */
 export const WINDOW_KM = 25
@@ -52,7 +52,7 @@ type Position = { km: number; line: number; direction: 1 | -1 | 0 }
  * a line change, since km posts do not carry across lines.
  */
 function currentPosition(
-  tt: TrainTimetable,
+  tt: EdrTrain,
   idx: number,
   nowSec: number | null,
   delayMin: number,
@@ -86,26 +86,26 @@ function currentPosition(
 
 /** The post's own kilometre post on a given line, if it sits on it. */
 function postKmOnLine(
-  tt: TrainTimetable,
-  postName: string,
+  tt: EdrTrain,
+  pointIds: Set<string>,
   line: number,
 ): number | null {
   const stop = tt.stops.find(
-    (s) => s.supervisedBy === postName && s.line === line && !s.offMap,
+    (s) => pointIds.has(s.pointId) && s.line === line && !s.offMap,
   )
   return stop ? stop.mileage : null
 }
 
 export function buildSchematic(
   trains: Train[],
-  timetables: Map<string, TrainTimetable>,
-  postName: string,
+  edrByNo: Map<string, EdrTrain>,
+  pointIds: Set<string>,
   nowSec: number | null,
 ): SchematicLine[] {
   const byLine = new Map<number, SchematicLine>()
 
   for (const train of trains) {
-    const tt = timetables.get(train.number)
+    const tt = edrByNo.get(train.number)
     if (!tt) continue
 
     const pos = currentPosition(
@@ -116,7 +116,7 @@ export function buildSchematic(
     )
     if (!pos) continue
 
-    const postKm = postKmOnLine(tt, postName, pos.line)
+    const postKm = postKmOnLine(tt, pointIds, pos.line)
     if (postKm === null) continue
 
     const distanceKm = Math.abs(pos.km - postKm)
@@ -151,7 +151,7 @@ export function buildSchematic(
       group.marks.push({
         km: s.mileage,
         name: s.point,
-        isPost: s.supervisedBy === postName,
+        isPost: pointIds.has(s.pointId),
       })
     }
   }

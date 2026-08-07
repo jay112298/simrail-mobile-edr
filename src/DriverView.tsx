@@ -2,7 +2,7 @@
 //
 // The dispatcher views rewrite arrival/departure to this post's occupation
 // window, which is wrong for a driver — they want their own schedule end to
-// end. So this reads the raw TrainTimetable rather than the post-enriched
+// end. So this reads the raw EdrTrain rather than the post-enriched
 // Train, and uses VDDelayedTimetableIndex to mark the current position.
 
 import { useEffect, useRef } from 'react'
@@ -10,7 +10,7 @@ import type { Train } from './data'
 import { wrapDiffSec } from './lib/enrich'
 import { etaLabel } from './lib/dispatch'
 import { hapticTap } from './lib/haptic'
-import type { TimetableStop, TrainTimetable } from './lib/timetable'
+import type { EdrStop, EdrTrain } from './lib/edrTimetable'
 import {
   SIGNAL_BADGE,
   SIGNAL_LABEL,
@@ -42,7 +42,7 @@ function Vital({
 }
 
 /** "L4 · km 29.5" — mileage is a line kilometre post, not route distance. */
-function linePost(stop: TimetableStop): string {
+function linePost(stop: EdrStop): string {
   if (stop.offMap) return 'outside simulated area'
   const parts: string[] = []
   if (stop.line != null) parts.push(`L${stop.line}`)
@@ -56,7 +56,7 @@ function StopRow({
   etaSec,
   rowRef,
 }: {
-  stop: TimetableStop
+  stop: EdrStop
   state: 'past' | 'current' | 'future'
   etaSec: number | null
   rowRef?: (el: HTMLLIElement | null) => void
@@ -130,7 +130,7 @@ export default function DriverView({
   onChangeTrain,
 }: {
   train: Train
-  timetable: TrainTimetable | undefined
+  timetable: EdrTrain | undefined
   nowSec: number | null
   onChangeTrain: () => void
 }) {
@@ -148,7 +148,7 @@ export default function DriverView({
   const signal = SIGNAL_BADGE[train.signalState]
   const delay = shortDelay(train.delay)
 
-  const etaFor = (s: TimetableStop): number | null => {
+  const etaFor = (s: EdrStop): number | null => {
     if (nowSec === null || s.arrivalSec === null) return null
     return wrapDiffSec(s.arrivalSec + train.delay * 60, nowSec)
   }
