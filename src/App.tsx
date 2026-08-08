@@ -34,7 +34,13 @@ import {
 import { useServerTime } from './lib/useTimetable'
 import { rowToTrain } from './lib/enrich'
 import { useEdrTimetable } from './lib/useEdrTimetable'
-import { rowsForStation, wrapDiff, type EdrTrain } from './lib/edrTimetable'
+import {
+  buildPointIndex,
+  rowsForStation,
+  wrapDiff,
+  type EdrTrain,
+} from './lib/edrTimetable'
+import { usePrioritySchedules } from './lib/usePrioritySchedules'
 import { TrainRow, TrainTable } from './TrainViews'
 import {
   SIGNAL_BADGE,
@@ -72,6 +78,13 @@ type View = 'timetable' | 'driver' | 'map' | 'settings'
 function migrateView(v: string): View {
   return v === 'live' ? 'driver' : (v as View)
 }
+
+/**
+ * How many nearby trains get a single-schedule fetch before the bulk
+ * download. Enough to fill the screen several times over at a busy post,
+ * small enough to finish in seconds.
+ */
+const PRIORITY_LIMIT = 40
 
 /** How tightly the train list is packed. Persisted — see DENSITY_OPTIONS. */
 type Density = 'rows' | 'table' | 'cards'
@@ -476,9 +489,6 @@ export default function App() {
   // from wall time — comparing them against Date.now() would skew every ETA.
   const nowSec = serverNowSec ?? simNowSec
 
-  // The whole server schedule, fetched once and cached. Rows for this station
-  // are derived from it; /trains-open only supplies live decoration.
-  const edr = useEdrTimetable(currentServer.code)
 
   // Live telemetry, keyed by train number, to decorate schedule rows.
   const liveByNumber = useMemo(() => {
@@ -505,11 +515,71 @@ export default function App() {
     return map
   }, [rawTrains, currentStation.lat, currentStation.lon])
 
+  /**
+   * Live trains ordered by how close they are to the post.
+   *
+   * Their single-train schedules are pulled in this order, so the trains
+   * about to matter resolve first and the list is usable within seconds —
+   * rather than waiting on the whole-server download, which can take minutes
+   * on a phone.
+   */
+  const priorityTrainNos = useMemo(() => {
+    const live = rawTrains.filter((t) => t.live)
+    if (currentStation.lat == null || currentStation.lon == null) {
+      return live.slice(0, PRIORITY_LIMIT).map((t) => t.number)
+    }
+    return live
+      .map((t) => ({
+        n: t.number,
+        d:
+          t.lat != null && t.lon != null
+            ? haversineKm(t.lat, t.lon, currentStation.lat!, currentStation.lon!)
+            : Number.POSITIVE_INFINITY,
+      }))
+      .sort((a, b) => a.d - b.d)
+      // Most live trains are hundreds of kilometres away and will never
+      // appear at this post. Fetching their schedules just delays the ones
+      // that will; the bulk download picks up the rest.
+      .slice(0, PRIORITY_LIMIT)
+      .map((x) => x.n)
+  }, [rawTrains, currentStation.lat, currentStation.lon])
+
+  const priority = usePrioritySchedules(
+    currentServer.code,
+    priorityTrainNos,
+    true,
+  )
+
+  /**
+   * The whole-server schedule. Its cache is read immediately, but the ~21 MB
+   * network fetch waits until the nearest-first pass has finished so the two
+   * do not compete for a slow, rate-limited endpoint.
+   */
+  const edr = useEdrTimetable(
+    currentServer.code,
+    priority.total > 0 && priority.done >= priority.total,
+  )
+
+  /**
+   * The full schedule when it is in, otherwise whatever the fast path has
+   * gathered. Both produce identical objects, so nothing downstream cares
+   * which it is looking at.
+   */
+  const scheduleTrains = useMemo(
+    () => (edr.trains.length > 0 ? edr.trains : [...priority.schedules.values()]),
+    [edr.trains, priority.schedules],
+  )
+
+  const pointIndex = useMemo(
+    () => (edr.trains.length > 0 ? edr.pointIndex : buildPointIndex(scheduleTrains)),
+    [edr.trains, edr.pointIndex, scheduleTrains],
+  )
+
   // The station's own point ids. Matching numerically avoids comparing Polish
   // station names with diacritics, and is how the official EDR does it.
   const stationPointIds = useMemo(
-    () => edr.pointIndex.get(currentStation.name) ?? new Set<string>(),
-    [edr.pointIndex, currentStation.name],
+    () => pointIndex.get(currentStation.name) ?? new Set<string>(),
+    [pointIndex, currentStation.name],
   )
 
   /**
@@ -521,14 +591,11 @@ export default function App() {
    * currently running (41 of 487 booked through Skierniewice on one sample).
    */
   const allTrains = useMemo(() => {
-    // Until the schedule is in there is nothing honest to show. Listing every
-    // live train on the server instead would fill the screen with trains that
-    // are nowhere near this post — the opposite failure to showing too few.
-    if (edr.trains.length === 0 || stationPointIds.size === 0) return []
-    return rowsForStation(edr.trains, stationPointIds).map((row) =>
+    if (scheduleTrains.length === 0 || stationPointIds.size === 0) return []
+    return rowsForStation(scheduleTrains, stationPointIds).map((row) =>
       rowToTrain(row, liveByNumber.get(row.train.trainNo), serverNowSec),
     )
-  }, [edr.trains, stationPointIds, liveByNumber, serverNowSec])
+  }, [scheduleTrains, stationPointIds, liveByNumber, serverNowSec])
 
   // Opt-in narrowing. The default is the whole booked timetable, matching the
   // official EDR — restricting to running trains is a view, not the truth.
@@ -583,11 +650,12 @@ export default function App() {
     return groups
   }, [servers])
 
-  const hasLiveTimetables = edr.trains.length > 0
+  const hasLiveTimetables = scheduleTrains.length > 0
   // The mock set is the first-paint fallback; every API train carries `live`.
   const hasLiveTrains = rawTrains.some((t) => t.live)
-  // The schedule is one request, so "loading" is simply that request.
-  const matchingInProgress = edr.loading
+  // Still gathering if neither path has produced anything to show yet.
+  const matchingInProgress =
+    edr.loading || priority.done < priority.total
 
   // A post the schedule never names has no rows, which reads as a broken app
   // unless we say so.
@@ -595,9 +663,9 @@ export default function App() {
 
   const edrByNo = useMemo(() => {
     const map = new Map<string, EdrTrain>()
-    for (const t of edr.trains) map.set(t.trainNo, t)
+    for (const t of scheduleTrains) map.set(t.trainNo, t)
     return map
-  }, [edr.trains])
+  }, [scheduleTrains])
 
   // An explicit pick wins; otherwise fall back to whichever train this Steam
   // id is driving. Both are looked up in the unfiltered live set, since the
@@ -828,6 +896,40 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Loading has to be legible, not a blank screen. Nearby schedules land
+          first and the count climbs; the whole-server download continues
+          behind them and only adds trains not yet running. */}
+      {(priority.done < priority.total || edr.loading) && (
+        <div className="px-3 py-1.5 border-b border-slate-800 bg-slate-900">
+          <div className="flex items-center justify-between text-[11px] mb-1">
+            <span className="text-slate-300">
+              {priority.done < priority.total
+                ? 'Loading schedules — nearest trains first'
+                : 'Loading full timetable in the background'}
+            </span>
+            <span className="font-mono text-slate-500">
+              {priority.done < priority.total
+                ? `${priority.done}/${priority.total}`
+                : `${scheduleTrains.length} trains`}
+            </span>
+          </div>
+          <div className="h-1 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className={`h-full bg-sky-500 ${
+                priority.done < priority.total ? '' : 'animate-pulse'
+              }`}
+              style={{
+                width:
+                  priority.total > 0
+                    ? `${Math.round((priority.done / priority.total) * 100)}%`
+                    : '100%',
+                transition: 'width 200ms linear',
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* An alert with nowhere to land is just noise: this names the train and
           the reason, and tapping it finds the row. */}

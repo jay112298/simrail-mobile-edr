@@ -189,16 +189,25 @@ const cacheKey = (serverCode: string) => `${CACHE_VERSION}:${serverCode}`
 // and forth would stack more.
 const inFlight = new Map<string, Promise<{ trains: EdrTrain[]; fetchedAt: number } | null>>()
 
+/** Cached whole-server schedule, without touching the network. */
+export async function readCachedTimetable(
+  serverCode: string,
+): Promise<{ trains: EdrTrain[]; fetchedAt: number } | null> {
+  const cached = await idbGet<Cached>(cacheKey(serverCode))
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return { trains: cached.trains, fetchedAt: cached.fetchedAt }
+  }
+  return null
+}
+
 export async function fetchEdrTimetable(
   serverCode: string,
   opts: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<{ trains: EdrTrain[]; fetchedAt: number } | null> {
   const key = cacheKey(serverCode)
   if (!opts.force) {
-    const cached = await idbGet<Cached>(key)
-    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-      return { trains: cached.trains, fetchedAt: cached.fetchedAt }
-    }
+    const cached = await readCachedTimetable(serverCode)
+    if (cached) return cached
     const running = inFlight.get(key)
     if (running) return running
   }
@@ -210,6 +219,10 @@ export async function fetchEdrTimetable(
     const res = await fetch(
       `${apiBase()}/getAllTimetables?serverCode=${encodeURIComponent(serverCode)}`,
     )
+    // This endpoint is rate limited hard. Say so rather than looking broken.
+    if (res.status === 429) {
+      throw new Error('Timetable server is rate limiting — try again shortly')
+    }
     if (!res.ok) return null
     const body = (await res.json()) as ApiEdrTrain[]
     if (!Array.isArray(body) || body.length === 0) return null
@@ -222,6 +235,43 @@ export async function fetchEdrTimetable(
 
   inFlight.set(key, work)
   return work
+}
+
+const trainCacheKey = (serverCode: string, trainNo: string) =>
+  `${CACHE_VERSION}t:${serverCode}:${trainNo}`
+
+/**
+ * One train's schedule (~14 KB, about a second).
+ *
+ * The whole-server download is ~21 MB and can take minutes on a phone, which
+ * left the app unusable until it finished. Fetching single schedules for the
+ * trains nearest the post gets real rows on screen in seconds, and the bulk
+ * download then fills in everything not yet running. Same endpoint and shape,
+ * so both paths produce identical objects.
+ */
+export async function fetchTrainSchedule(
+  serverCode: string,
+  trainNo: string,
+  signal?: AbortSignal,
+): Promise<EdrTrain | null> {
+  const key = trainCacheKey(serverCode, trainNo)
+  const cached = await idbGet<EdrTrain>(key)
+  if (cached) return cached
+
+  const res = await fetch(
+    `${apiBase()}/getAllTimetables?serverCode=${encodeURIComponent(
+      serverCode,
+    )}&train=${encodeURIComponent(trainNo)}`,
+    { signal },
+  )
+  if (!res.ok) return null
+  const body = (await res.json()) as ApiEdrTrain | ApiEdrTrain[]
+  const rec = Array.isArray(body) ? body[0] : body
+  if (!rec?.timetable?.length) return null
+
+  const mapped = mapTrain(rec)
+  void idbSet(key, mapped)
+  return mapped
 }
 
 /**

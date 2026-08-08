@@ -13,6 +13,12 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- The app draws its own near-black background under a transparent
+             status bar. Android defaults the status bar icons to dark, which
+             makes the clock and battery invisible against it, so force the
+             light (white) icon set. -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 
 

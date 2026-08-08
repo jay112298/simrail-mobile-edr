@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   buildPointIndex,
   fetchEdrTimetable,
+  readCachedTimetable,
   type EdrTrain,
 } from './edrTimetable'
 
@@ -23,7 +24,16 @@ export type EdrTimetableState = {
  * position, speed, signals — comes from /trains-open every 15 s and is merged
  * onto these rows.
  */
-export function useEdrTimetable(serverCode: string): EdrTimetableState {
+/**
+ * @param allowNetwork Gate on the bulk download only. The cache is always
+ *   read, so a warm start is instant; the network fetch waits until the
+ *   nearest-first pass has finished, so the two do not compete for a slow,
+ *   rate-limited endpoint.
+ */
+export function useEdrTimetable(
+  serverCode: string,
+  allowNetwork: boolean,
+): EdrTimetableState {
   const [trains, setTrains] = useState<EdrTrain[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -38,14 +48,22 @@ export function useEdrTimetable(serverCode: string): EdrTimetableState {
     setTrains([])
     setFetchedAt(null)
 
-    fetchEdrTimetable(serverCode, {
-      force: nonce > 0,
-      signal: ctrl.signal,
-    })
+    const load = async () => {
+      const cached = await readCachedTimetable(serverCode)
+      if (cached) return cached
+      if (!allowNetwork && nonce === 0) return null
+      return fetchEdrTimetable(serverCode, {
+        force: nonce > 0,
+        signal: ctrl.signal,
+      })
+    }
+
+    load()
       .then((result) => {
         if (cancelled) return
         if (!result) {
-          setError('Timetable unavailable')
+          // Not an error while the fast path is still running — the bulk
+          // download simply has not been allowed to start yet.
           setLoading(false)
           return
         }
@@ -63,7 +81,7 @@ export function useEdrTimetable(serverCode: string): EdrTimetableState {
       cancelled = true
       ctrl.abort()
     }
-  }, [serverCode, nonce])
+  }, [serverCode, nonce, allowNetwork])
 
   const pointIndex = useMemo(() => buildPointIndex(trains), [trains])
   const refresh = useCallback(() => setNonce((n) => n + 1), [])
