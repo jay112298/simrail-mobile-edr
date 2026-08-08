@@ -225,22 +225,32 @@ export async function fetchEdrTimetable(
 }
 
 /**
- * Point name → the point ids carrying that name.
+ * Station name → every point id that station controls.
  *
- * The feed has no `supervisedBy`; points are identified by id. Matching a
- * station to its ids once, here, means every later lookup is numeric rather
- * than a string compare against Polish names with diacritics.
+ * A post is an *area*, not a point. Skierniewice controls six: the station
+ * itself plus "M PZS", "P PZS", "S PZS", "R402" and "GT 201-208". Matching
+ * only the point sharing the station's name missed every train that runs
+ * through the area without calling there — 106 of 487 at Skierniewice, which
+ * is precisely the Płyćwia–Bełchów traffic.
+ *
+ * Both keys are indexed: what the point is called, and what post controls it.
+ * Resolving to ids once here keeps later lookups numeric rather than string
+ * comparisons against Polish names with diacritics.
  */
 export function buildPointIndex(trains: EdrTrain[]): Map<string, Set<string>> {
   const index = new Map<string, Set<string>>()
+  const add = (key: string, id: string) => {
+    let ids = index.get(key)
+    if (!ids) {
+      ids = new Set()
+      index.set(key, ids)
+    }
+    ids.add(id)
+  }
   for (const t of trains) {
     for (const s of t.stops) {
-      let ids = index.get(s.point)
-      if (!ids) {
-        ids = new Set()
-        index.set(s.point, ids)
-      }
-      ids.add(s.pointId)
+      add(s.point, s.pointId)
+      if (s.supervisedBy) add(s.supervisedBy, s.pointId)
     }
   }
   return index
@@ -291,8 +301,15 @@ export function rowsForStation(
 ): StationRow[] {
   const rows: StationRow[] = []
   for (const train of trains) {
-    const i = train.stops.findIndex((s) => pointIds.has(s.pointId))
-    if (i < 0) continue
+    const matches: number[] = []
+    for (let k = 0; k < train.stops.length; k++) {
+      if (pointIds.has(train.stops[k].pointId)) matches.push(k)
+    }
+    if (matches.length === 0) continue
+    // A train may touch several of the post's points. Anchor on the one with
+    // a platform — that is the station call the dispatcher plans around —
+    // and otherwise on the first point it reaches in the area.
+    const i = matches.find((k) => train.stops[k].platform) ?? matches[0]
     const stop = train.stops[i]
     rows.push({
       train,

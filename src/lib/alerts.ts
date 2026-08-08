@@ -147,8 +147,13 @@ export function detectAlerts(
       }
     }
 
+    // Held and overdue describe a train that is *running*. The list now holds
+    // the whole booked schedule, and a train that has not spawned reports
+    // speed 0 with no signal — without this guard every booked train whose
+    // departure time has passed would raise an overdue alert at once.
     if (
       settings.kinds.held &&
+      t.live &&
       t.speed === 0 &&
       t.signalState === 'red' &&
       withinKm(t, HELD_RADIUS_KM)
@@ -161,7 +166,12 @@ export function detectAlerts(
       })
     }
 
-    if (settings.kinds.overdue && t.speed === 0 && withinKm(t, OVERDUE_RADIUS_KM)) {
+    if (
+      settings.kinds.overdue &&
+      t.live &&
+      t.speed === 0 &&
+      withinKm(t, OVERDUE_RADIUS_KM)
+    ) {
       const departure = hhmmToSec(t.departure)
       if (departure !== null && wrapDiffSec(nowSec, departure) > 60) {
         out.push({
