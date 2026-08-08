@@ -22,6 +22,17 @@ const PRIORITY: AlertKind[] = ['held', 'conflict', 'overdue', 'player', 'approac
 const LOG_LIMIT = 30
 
 /**
+ * The same condition must not nag. A train can flicker in and out of a state
+ * — creeping forward and stopping again at a red, a conflict appearing and
+ * clearing as delays shift — and edge-triggering alone re-fires every time.
+ * A key that has just sounded stays quiet for this long.
+ */
+const KEY_COOLDOWN_MS = 10 * 60 * 1000
+
+/** Never two sounds closer together than this, whatever fires. */
+const GLOBAL_GAP_MS = 6 * 1000
+
+/**
  * @param ready Whether the underlying data has settled. Timetables stream in
  *   over ~30 s after launch, so a set primed before they land is nearly
  *   empty, and every train then reads as a brand-new event — a burst of
@@ -34,10 +45,19 @@ export function useAlerts(
   nowSec: number | null,
   settings: AlertSettings,
   ready: boolean,
-): { log: LoggedAlert[]; clearLog: () => void } {
+): {
+  log: LoggedAlert[]
+  clearLog: () => void
+  /** Most recent alert, for the banner. Cleared when acted on or dismissed. */
+  latest: LoggedAlert | null
+  dismissLatest: () => void
+} {
   const [log, setLog] = useState<LoggedAlert[]>([])
+  const [latest, setLatest] = useState<LoggedAlert | null>(null)
   // null means "not primed yet" — see the seeding note below.
   const known = useRef<Set<string> | null>(null)
+  const lastFired = useRef<Map<string, number>>(new Map())
+  const lastSound = useRef(0)
 
   const active = useMemo(
     () => detectAlerts(trains, conflicts, nowSec, settings),
@@ -64,11 +84,16 @@ export function useAlerts(
       return
     }
 
-    const fresh = active.filter((a) => !known.current!.has(a.key))
+    const now = Date.now()
+    const fresh = active.filter((a) => {
+      if (known.current!.has(a.key)) return false
+      const last = lastFired.current.get(a.key)
+      return last === undefined || now - last >= KEY_COOLDOWN_MS
+    })
     known.current = currentKeys
     if (fresh.length === 0) return
 
-    const now = Date.now()
+    for (const a of fresh) lastFired.current.set(a.key, now)
     setLog((prev) =>
       [...fresh.map((a) => ({ ...a, at: now })), ...prev].slice(0, LOG_LIMIT),
     )
@@ -76,11 +101,22 @@ export function useAlerts(
     const lead = [...fresh].sort(
       (a, b) => PRIORITY.indexOf(a.kind) - PRIORITY.indexOf(b.kind),
     )[0]
-    playTones(tonesFor(lead.kind), settings.volume)
-    vibrate(vibrationFor(lead.kind))
+    setLatest({ ...lead, at: now })
+
+    // Log and banner still update; only the noise is rate limited.
+    if (now - lastSound.current >= GLOBAL_GAP_MS) {
+      lastSound.current = now
+      playTones(tonesFor(lead.kind), settings.volume)
+      vibrate(vibrationFor(lead.kind))
+    }
   }, [active, ready, settings.enabled, settings.volume])
 
-  return { log, clearLog: () => setLog([]) }
+  return {
+    log,
+    clearLog: () => setLog([]),
+    latest,
+    dismissLatest: () => setLatest(null),
+  }
 }
 
 /**

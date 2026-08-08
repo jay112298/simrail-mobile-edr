@@ -15,10 +15,14 @@ import {
   routeLabel,
   shortDelay,
 } from './lib/ui'
+import { STATE_STYLE, type TrainState } from './lib/trainState'
 
 type RowProps = {
   train: Train
   nowSec: number
+  state: TrainState
+  /** Briefly ringed after the user taps an alert naming this train. */
+  flash?: boolean
   conflictsWith: string[]
   expanded: boolean
   onToggle: (n: string) => void
@@ -68,15 +72,20 @@ export function TrainRow({
   onToggle,
   onOpen,
   onOpenNumber,
+  state,
+  flash,
 }: RowProps) {
   const etaSec = computeETASec(train, nowSec)
   const eta = URGENCY_STYLE[etaUrgency(etaSec)]
   const delay = shortDelay(train.delay)
   const inConflict = conflictsWith.length > 0
+  const style = STATE_STYLE[state]
 
   return (
     <li
-      className={`border-b border-slate-800 ${inConflict ? 'bg-red-500/5' : ''}`}
+      className={`border-b border-slate-800 border-l-4 ${style.stripe} ${style.tint} ${
+        flash ? 'ring-2 ring-sky-400 ring-inset' : ''
+      }`}
     >
       <div
         role="button"
@@ -94,6 +103,9 @@ export function TrainRow({
         className="px-3 py-1.5 cursor-pointer active:bg-slate-800/60 focus:outline-none focus:bg-slate-800/60"
       >
         <div className="flex items-center gap-2">
+          <span className={`text-[10px] ${style.text}`} title={style.label}>
+            {style.glyph}
+          </span>
           <span className="font-mono font-bold text-[15px] text-white tabular-nums">
             {train.number}
           </span>
@@ -205,10 +217,14 @@ export function TrainRow({
 export function TrainTable({
   trains,
   conflicts,
+  stateOf,
+  flashTrain,
   onOpen,
 }: {
   trains: Train[]
   conflicts: Map<string, string[]>
+  stateOf: (n: string) => TrainState
+  flashTrain?: string | null
   onOpen: (t: Train) => void
 }) {
   return (
@@ -237,21 +253,28 @@ export function TrainTable({
           {trains.map((t) => {
             const conflictsWith = conflicts.get(t.number) ?? []
             const delay = shortDelay(t.delay)
+            const style = STATE_STYLE[stateOf(t.number)]
             return (
               <tr
                 key={t.number}
+                data-train={t.number}
+                title={
+                  conflictsWith.length > 0
+                    ? `Platform conflict with ${conflictsWith.join(', ')}`
+                    : undefined
+                }
                 onClick={() => {
                   hapticTap()
                   onOpen(t)
                 }}
-                className={`border-b border-slate-800/70 cursor-pointer active:bg-slate-800/60 ${
-                  conflictsWith.length > 0 ? 'bg-red-500/10' : ''
+                className={`border-b border-slate-800/70 cursor-pointer active:bg-slate-800/60 border-l-4 ${style.stripe} ${style.tint} ${
+                  flashTrain === t.number ? 'ring-2 ring-sky-400 ring-inset' : ''
                 }`}
               >
                 <td className="px-1 py-1 font-mono font-bold text-white tabular-nums whitespace-nowrap">
-                  {conflictsWith.length > 0 && (
-                    <span className="text-red-400 text-[9px] align-top">⚠</span>
-                  )}
+                  <span className={`text-[9px] align-top ${style.text}`}>
+                    {style.glyph}
+                  </span>
                   {t.number}
                 </td>
                 <td className="px-0.5 py-1">

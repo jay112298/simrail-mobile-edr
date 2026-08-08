@@ -19,6 +19,27 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* index.html sets viewport-fit=cover so the app fills the screen; without
+   this the header renders underneath the status bar / notch. */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+@keyframes alertIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.alert-in {
+  animation: alertIn 0.2s ease-out;
+}
+
 .card-press:active {
   transform: scale(0.98);
 }

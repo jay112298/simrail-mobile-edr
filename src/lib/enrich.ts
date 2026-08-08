@@ -147,6 +147,7 @@ export function rowToTrain(
     lon: live?.lon,
     // The train has finished with this station once it has worked past this
     // stop; used for an opt-in filter, never to hide rows outright.
+    postStopIndex: stop.index,
     clearedPost:
       live?.timetableIndex != null && live.timetableIndex > stop.index,
   }

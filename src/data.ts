@@ -102,6 +102,8 @@ export type Train = {
   track?: number | null
   /** True once the train has worked past the last point this post controls. */
   clearedPost?: boolean
+  /** Index of this post's stop in the train's own schedule. */
+  postStopIndex?: number
   /** Metres to the next signal ahead. */
   signalDistance?: number
   /** Speed permitted at the next signal, km/h. Undefined when unrestricted. */

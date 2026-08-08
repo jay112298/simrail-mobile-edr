@@ -14,6 +14,13 @@ import {
 import { normalizeRegion } from './lib/api'
 import { haversineKm } from './lib/geo'
 import { buildSchematic } from './lib/schematic'
+import {
+  STATE_ORDER,
+  STATE_STYLE,
+  isPresentAtPost,
+  trainState,
+  type TrainState,
+} from './lib/trainState'
 import { useServers, useStations, useTrains } from './lib/useLive'
 import {
   computeETASec,
@@ -465,6 +472,10 @@ export default function App() {
   // on train number so cards can show booked times, platform and onward route
   // rather than telemetry alone.
   const serverNowSec = useServerTime(currentServer.code)
+  // Scheduled times come from the in-game clock, which runs on its own offset
+  // from wall time — comparing them against Date.now() would skew every ETA.
+  const nowSec = serverNowSec ?? simNowSec
+
   // The whole server schedule, fetched once and cached. Rows for this station
   // are derived from it; /trains-open only supplies live decoration.
   const edr = useEdrTimetable(currentServer.code)
@@ -527,12 +538,31 @@ export default function App() {
   )
   const [windowHours, setWindowHours] = useLocalStorage<number>('windowHours', 2)
 
+  // Conflicts are judged across every train booked through the post, not the
+  // windowed view — a clash with a train just outside the window is still a
+  // clash, and hiding it would be the same mistake as filtering the list.
+  const conflicts = useMemo(() => detectConflicts(allTrains), [allTrains])
+
+  const stateByNumber = useMemo(() => {
+    const map = new Map<string, TrainState>()
+    for (const t of allTrains) {
+      const eta = computeETASec(t, nowSec)
+      const inConflict = (conflicts.get(t.number)?.length ?? 0) > 0
+      map.set(t.number, trainState(t, eta, inConflict))
+    }
+    return map
+  }, [allTrains, conflicts, nowSec])
+
   const trains = useMemo(() => {
     let rows = allTrains
     if (onlyOnTrack) rows = rows.filter((t) => t.live)
     if (windowHours > 0 && serverNowSec !== null) {
       const span = windowHours * 3600
       rows = rows.filter((t) => {
+        // A train at or arriving into the platform stays no matter what the
+        // window says — it is the one being worked right now.
+        const state = stateByNumber.get(t.number)
+        if (state && isPresentAtPost(state)) return true
         const arr = hhmmToSec(t.arrival) ?? hhmmToSec(t.departure)
         if (arr === null) return true
         const d = wrapDiff(arr, serverNowSec)
@@ -541,7 +571,7 @@ export default function App() {
       })
     }
     return rows
-  }, [allTrains, onlyOnTrack, windowHours, serverNowSec])
+  }, [allTrains, onlyOnTrack, windowHours, serverNowSec, stateByNumber])
 
   const serversByRegion = useMemo(() => {
     const groups = new Map<ServerRegion, Server[]>()
@@ -553,9 +583,6 @@ export default function App() {
     return groups
   }, [servers])
 
-  // Scheduled times come from the in-game clock, which runs on its own offset
-  // from wall time — comparing them against Date.now() would skew every ETA.
-  const nowSec = serverNowSec ?? simNowSec
   const hasLiveTimetables = edr.trains.length > 0
   // The mock set is the first-paint fallback; every API train carries `live`.
   const hasLiveTrains = rawTrains.some((t) => t.live)
@@ -615,8 +642,6 @@ export default function App() {
     )
   }, [stations, stationQuery])
 
-  const conflicts = useMemo(() => detectConflicts(trains), [trains])
-
   // Conflicts are a property of the railway, not of the current filter, so
   // they are detected across every train at this post. That means a listed
   // train can name a partner the category filter or search is hiding — so the
@@ -651,7 +676,30 @@ export default function App() {
   )
   const [keepAwake, setKeepAwake] = useLocalStorage<boolean>('keepAwake', false)
   const { supported: wakeLockSupported } = useWakeLock(keepAwake)
-  const { log: alertLog, clearLog } = useAlerts(
+  // Set when the user taps an alert, so the named train can be found in the
+  // list. Cleared on a timer — a permanent ring would become wallpaper.
+  const [flashTrain, setFlashTrain] = useState<string | null>(null)
+
+  const locateTrain = useCallback((number: string) => {
+    setFlashTrain(number)
+    setView('timetable')
+    // Let the row render before scrolling to it.
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-train="${number}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+    window.setTimeout(() => setFlashTrain(null), 6000)
+    // setView is stable; number is the only real input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const {
+    log: alertLog,
+    clearLog,
+    latest: latestAlert,
+    dismissLatest,
+  } = useAlerts(
     trains,
     conflicts,
     serverNowSec,
@@ -718,34 +766,28 @@ export default function App() {
   return (
     <div className="max-w-lg mx-auto min-h-screen flex flex-col relative bg-slate-950 text-slate-100">
       {/* Sticky stack: header + (timetable-only) filter row */}
-      <div className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md">
-      <header className="border-b border-slate-800 px-4 pt-3 pb-2">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="text-sky-400"
-              >
-                <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-                <line x1="4" x2="4" y1="22" y2="15" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold tracking-wide text-white">
-                Mobile EDR
-              </h1>
-              <p className="text-[11px] text-slate-400 leading-none">
-                SimRail · Installable
-              </p>
-            </div>
-          </div>
+      <div className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md safe-top">
+      {/* One compact row. The old layout spent a title block and a full-width
+          station card on things that never change during a shift; that space
+          belongs to trains. */}
+      <header className="border-b border-slate-800 px-3 pt-2 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              hapticTap()
+              setShowStationModal(true)
+            }}
+            aria-label={`Dispatch post: ${currentStation.name}. Tap to change.`}
+            className="flex-1 min-w-0 text-left active:scale-[0.98] transition-transform"
+          >
+            <p className="text-[10px] uppercase tracking-wider text-slate-500 leading-none">
+              Post
+            </p>
+            <p className="text-base font-semibold text-white truncate leading-tight">
+              {currentStation.name}
+              <span className="text-slate-500 ml-1">▾</span>
+            </p>
+          </button>
           <button
             onClick={() => {
               hapticTap()
@@ -785,33 +827,52 @@ export default function App() {
             </svg>
           </button>
         </div>
-
-        <button
-          onClick={() => setShowStationModal(true)}
-          className="w-full flex items-center justify-between bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-left"
-        >
-          <div>
-            <p className="text-[11px] uppercase tracking-wider text-slate-400 mb-0.5">
-              Dispatch Post
-            </p>
-            <p className="text-base font-semibold text-white">
-              {currentStation.name}
-            </p>
-          </div>
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="text-slate-400"
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
       </header>
+
+      {/* An alert with nowhere to land is just noise: this names the train and
+          the reason, and tapping it finds the row. */}
+      {latestAlert && (
+        <button
+          onClick={() => {
+            hapticTap()
+            locateTrain(latestAlert.trainNo)
+            dismissLatest()
+          }}
+          className={`alert-in w-full flex items-center gap-2 px-3 py-2 text-left border-b ${
+            latestAlert.kind === 'conflict' || latestAlert.kind === 'held'
+              ? 'bg-red-500/20 border-red-500/50 text-red-200'
+              : 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+          }`}
+        >
+          <span className="text-sm">
+            {latestAlert.kind === 'conflict' || latestAlert.kind === 'held'
+              ? '⚠'
+              : '●'}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] uppercase tracking-wider opacity-80 leading-none">
+              {ALERT_LABEL[latestAlert.kind]}
+            </span>
+            <span className="block text-[13px] font-medium truncate">
+              {latestAlert.message}
+            </span>
+          </span>
+          <span className="text-[11px] font-semibold underline underline-offset-2 shrink-0">
+            Show
+          </span>
+          <span
+            role="button"
+            aria-label="Dismiss"
+            onClick={(e) => {
+              e.stopPropagation()
+              dismissLatest()
+            }}
+            className="px-1 text-lg leading-none opacity-70 shrink-0"
+          >
+            ×
+          </span>
+        </button>
+      )}
 
       {view === 'timetable' && (
         <>
@@ -990,6 +1051,8 @@ export default function App() {
             <TrainTable
               trains={filteredTrains}
               conflicts={conflicts}
+              stateOf={(n) => stateByNumber.get(n) ?? 'scheduled'}
+              flashTrain={flashTrain}
               onOpen={setSelectedTrain}
             />
           ) : (
@@ -1001,6 +1064,8 @@ export default function App() {
                   nowSec={nowSec}
                   conflictsWith={conflicts.get(t.number) ?? []}
                   expanded={expandedRow === t.number}
+                  state={stateByNumber.get(t.number) ?? 'scheduled'}
+                  flash={flashTrain === t.number}
                   onToggle={(n) =>
                     setExpandedRow((cur) => (cur === n ? null : n))
                   }
@@ -1049,6 +1114,35 @@ export default function App() {
                 </button>
               ))}
             </div>
+          </section>
+
+          <section>
+            <h2 className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">
+              Colour key
+            </h2>
+            <div className="rounded-xl bg-slate-900 border border-slate-800 overflow-hidden">
+              {STATE_ORDER.map((s) => {
+                const style = STATE_STYLE[s]
+                return (
+                  <div
+                    key={s}
+                    className={`flex items-center gap-2.5 px-3 py-2 border-l-4 ${style.stripe} ${style.tint} border-b border-slate-800/60 last:border-b-0`}
+                  >
+                    <span className={`text-[11px] w-3 text-center ${style.text}`}>
+                      {style.glyph}
+                    </span>
+                    <span className="text-[13px] text-slate-200">
+                      {style.label}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              The stripe down the left of each row is its state. Pink matches
+              the in-game timetable for a train arriving or standing at your
+              platform.
+            </p>
           </section>
 
           <section>

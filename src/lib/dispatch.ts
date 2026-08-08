@@ -93,14 +93,38 @@ export function etaLabel(sec: number | null): string {
 const NON_CONFLICT_PLATFORMS = new Set(['-', 'Tow.', ''])
 
 /**
- * Occupation window for a train: [arrival+delay, departure+delay] in sec-of-day.
- * Null when the train has no timetable to derive a window from.
+ * A train holds the platform for at least this long even when booked to run
+ * straight through. Booked arrival and departure are identical for a
+ * pass-through, and a zero-length window can never overlap anything — so two
+ * trains booked through the same platform a minute apart raised no conflict
+ * at all.
+ */
+const MIN_OCCUPATION_SEC = 90
+
+/**
+ * Required clearance between one train leaving a platform and the next
+ * arriving. Back-to-back movements do not overlap arithmetically but are
+ * still a conflict in practice.
+ */
+const HEADWAY_SEC = 120
+
+/**
+ * Projected occupation window: [arrival, departure] shifted by the delay the
+ * train is actually running, in sec-of-day.
+ *
+ * Using projected rather than booked times is what makes the interesting case
+ * work: a train booked 12:00 and one booked 12:30 do not clash, but if the
+ * first is running 30 late it arrives into the second's slot and they do.
  */
 export function trainWindowSec(train: Train): [number, number] | null {
   const arr = hhmmToSec(train.arrival)
   const dep = hhmmToSec(train.departure)
   if (arr === null || dep === null) return null
-  return [arr + train.delay * 60, dep + train.delay * 60]
+  const shift = train.delay * 60
+  const start = arr + shift
+  // Departure before arrival means the window wraps midnight.
+  const booked = dep >= arr ? dep - arr : dep + SECONDS_IN_DAY - arr
+  return [start, start + Math.max(booked, MIN_OCCUPATION_SEC)]
 }
 
 export type ConflictMap = Map<string, string[]>
@@ -128,7 +152,9 @@ export function detectConflicts(trains: Train[]): ConflictMap {
         if (!wa || !wb) continue
         const [a1, a2] = wa
         const [b1, b2] = wb
-        if (a1 < b2 && b1 < a2) {
+        // Conflict when the windows overlap, or when they are separated by
+        // less than the clearance a dispatcher needs between movements.
+        if (a1 < b2 + HEADWAY_SEC && b1 < a2 + HEADWAY_SEC) {
           const na = list[i].number
           const nb = list[j].number
           conflicts.set(na, [...(conflicts.get(na) ?? []), nb])
