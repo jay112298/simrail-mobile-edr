@@ -87,6 +87,7 @@ export function rowToTrain(
     arrival: stop.arrival,
     departure: stop.departure,
     platform: edrPlatform(stop),
+    platformId: stop.platform,
     track: stop.track,
     delay,
     // A train with no live record has not spawned yet — it is booked, not running.

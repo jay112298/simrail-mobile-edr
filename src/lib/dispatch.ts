@@ -127,11 +127,34 @@ export function trainWindowSec(train: Train): [number, number] | null {
   const arr = hhmmToSec(train.arrival)
   const dep = hhmmToSec(train.departure)
   if (arr === null || dep === null) return null
-  const shift = train.delay * 60
-  const start = arr + shift
-  // Departure before arrival means the window wraps midnight.
+  // Normalise the start into the day. A late train booked near midnight
+  // otherwise produces a start beyond 24:00, which compares against nothing.
+  const start =
+    (((arr + train.delay * 60) % SECONDS_IN_DAY) + SECONDS_IN_DAY) %
+    SECONDS_IN_DAY
+  // Departure before arrival means the booked window wraps midnight.
   const booked = dep >= arr ? dep - arr : dep + SECONDS_IN_DAY - arr
   return [start, start + Math.max(booked, MIN_OCCUPATION_SEC)]
+}
+
+/**
+ * Do two occupation windows clash, allowing for the day boundary?
+ *
+ * Windows are seconds-of-day, so a train at 23:58 and one at 00:03 are five
+ * minutes apart but nearly a full day apart arithmetically. Testing the
+ * neighbouring days as well catches that; a genuinely distant pair stays
+ * distant under every offset, because the windows are only minutes long.
+ */
+export function windowsClash(
+  a: [number, number],
+  b: [number, number],
+): boolean {
+  for (const shift of [-SECONDS_IN_DAY, 0, SECONDS_IN_DAY]) {
+    const b1 = b[0] + shift
+    const b2 = b[1] + shift
+    if (a[0] < b2 + HEADWAY_SEC && b1 < a[1] + HEADWAY_SEC) return true
+  }
+  return false
 }
 
 export type ConflictMap = Map<string, string[]>
@@ -140,28 +163,45 @@ export type ConflictMap = Map<string, string[]>
  * For each pair of trains sharing a platform with overlapping windows,
  * record the conflict. Returns train.number → conflicting train numbers.
  */
+/**
+ * Can these two occupy the same piece of railway?
+ *
+ * Grouping used to key on the displayed label, so "II" and "II 1" hashed
+ * apart and a train with an unknown track was never compared against one on
+ * a known track at the same platform. Different *known* tracks genuinely do
+ * not conflict; an unknown track might be either, so it is not ruled out.
+ */
+function sharesTrack(a: Train, b: Train): boolean {
+  if (a.track != null && b.track != null) return a.track === b.track
+  return true
+}
+
 export function detectConflicts(trains: Train[]): ConflictMap {
   const byPlatform = new Map<string, Train[]>()
   for (const t of trains) {
-    if (NON_CONFLICT_PLATFORMS.has(t.platform)) continue
-    const list = byPlatform.get(t.platform) ?? []
+    // Group on the bare platform, falling back to the label for trains that
+    // never carried a separate platform id.
+    const key = t.platformId ?? t.platform
+    if (NON_CONFLICT_PLATFORMS.has(key) || NON_CONFLICT_PLATFORMS.has(t.platform))
+      continue
+    const list = byPlatform.get(key) ?? []
     list.push(t)
-    byPlatform.set(t.platform, list)
+    byPlatform.set(key, list)
   }
   const conflicts: ConflictMap = new Map()
   for (const list of byPlatform.values()) {
     if (list.length < 2) continue
+    // Windows are per-train; computing them once avoids repeating the work
+    // for every pair, which is quadratic on a busy platform.
+    const windows = list.map(trainWindowSec)
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
-        const wa = trainWindowSec(list[i])
-        const wb = trainWindowSec(list[j])
+        const wa = windows[i]
+        const wb = windows[j]
         // No timetable → no occupation window → nothing to overlap.
         if (!wa || !wb) continue
-        const [a1, a2] = wa
-        const [b1, b2] = wb
-        // Conflict when the windows overlap, or when they are separated by
-        // less than the clearance a dispatcher needs between movements.
-        if (a1 < b2 + HEADWAY_SEC && b1 < a2 + HEADWAY_SEC) {
+        if (!sharesTrack(list[i], list[j])) continue
+        if (windowsClash(wa, wb)) {
           const na = list[i].number
           const nb = list[j].number
           conflicts.set(na, [...(conflicts.get(na) ?? []), nb])

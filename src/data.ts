@@ -100,6 +100,12 @@ export type Train = {
   onwardLine?: number | null
   /** Track within the platform at the current post. */
   track?: number | null
+  /**
+   * Bare platform, without the track suffix that `platform` carries for
+   * display. Conflict detection groups on this: "II" and "II 1" are the same
+   * platform and must be compared, not hashed apart.
+   */
+  platformId?: string | null
   /** True once the train has worked past the last point this post controls. */
   clearedPost?: boolean
   /** Index of this post's stop in the train's own schedule. */
