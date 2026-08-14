@@ -54,6 +54,14 @@ export function useAlerts(
 } {
   const [log, setLog] = useState<LoggedAlert[]>([])
   const [latest, setLatest] = useState<LoggedAlert | null>(null)
+
+  // The banner is a prompt, not a status line. Left up it becomes wallpaper
+  // and starts describing a situation that has already resolved.
+  useEffect(() => {
+    if (!latest) return
+    const id = window.setTimeout(() => setLatest(null), 45_000)
+    return () => window.clearTimeout(id)
+  }, [latest])
   // null means "not primed yet" — see the seeding note below.
   const known = useRef<Set<string> | null>(null)
   const lastFired = useRef<Map<string, number>>(new Map())

@@ -49,10 +49,17 @@ export function useSimNow(): number {
  * Negative = in the past. Null when the train has no timetable.
  */
 export function computeETASec(train: Train, nowSec: number): number | null {
-  const target =
-    train.status === 'standing'
-      ? hhmmToSec(train.departure)
-      : hhmmToSec(train.arrival)
+  // Count down to departure only for a train standing *here*. `status` alone
+  // says "stopped somewhere", so a train held at a red fifty kilometres away
+  // was counting down to this post's departure time instead of its arrival.
+  const standingHere =
+    train.live &&
+    train.speed === 0 &&
+    train.postStopIndex != null &&
+    train.timetableIndex === train.postStopIndex
+  const target = standingHere
+    ? hhmmToSec(train.departure)
+    : hhmmToSec(train.arrival)
   if (target === null) return null
   const withDelay = target + train.delay * 60
   return withDelay - nowSec

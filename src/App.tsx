@@ -516,6 +516,41 @@ export default function App() {
   }, [rawTrains, currentStation.lat, currentStation.lon])
 
   /**
+   * Driver mode searches every live train, not the station's rows.
+   *
+   * The train you are driving is usually nowhere near the post you are
+   * dispatching — scoping this to station rows meant a correct Steam ID still
+   * reported "no train selected" whenever your train did not happen to pass
+   * that station.
+   */
+  const driverPool = useMemo(
+    () => rawTrains.filter((t) => t.live),
+    [rawTrains],
+  )
+
+  const driverTrain = useMemo(() => {
+    if (driverTrainNo) {
+      const picked = driverPool.find((t) => t.number === driverTrainNo)
+      if (picked) return picked
+    }
+    const id = steamId.trim()
+    if (id) return driverPool.find((t) => t.controlledBy === id) ?? null
+    return null
+  }, [driverPool, driverTrainNo, steamId])
+
+  const driverCandidates = useMemo(() => {
+    const q = driverQuery.trim().toLowerCase()
+    const pool = q
+      ? driverPool.filter(
+          (t) =>
+            t.number.toLowerCase().includes(q) ||
+            t.type.toLowerCase().includes(q),
+        )
+      : driverPool.filter((t) => t.driver === 'player')
+    return pool.slice(0, 60)
+  }, [driverPool, driverQuery])
+
+  /**
    * Live trains ordered by how close they are to the post.
    *
    * Their single-train schedules are pulled in this order, so the trains
@@ -544,11 +579,15 @@ export default function App() {
       .map((x) => x.n)
   }, [rawTrains, currentStation.lat, currentStation.lon])
 
-  const priority = usePrioritySchedules(
-    currentServer.code,
-    priorityTrainNos,
-    true,
-  )
+  // Your own train's schedule is wanted first whatever its distance — driver
+  // mode is useless without it, and it is rarely near the post.
+  const prioritised = useMemo(() => {
+    const own = driverTrain?.number
+    if (!own) return priorityTrainNos
+    return [own, ...priorityTrainNos.filter((n) => n !== own)]
+  }, [priorityTrainNos, driverTrain])
+
+  const priority = usePrioritySchedules(currentServer.code, prioritised, true)
 
   /**
    * The whole-server schedule. Its cache is read immediately, but the ~21 MB
@@ -557,7 +596,13 @@ export default function App() {
    */
   const edr = useEdrTimetable(
     currentServer.code,
-    priority.total > 0 && priority.done >= priority.total,
+    // Wait for the live feed to resolve, then start once the nearest-first
+    // pass is done — or immediately if it produced no work at all. Requiring
+    // `total > 0` deadlocked a server with no live trains: there was nothing
+    // to prioritise, so the bulk download never started and the app stayed
+    // permanently empty with no error.
+    !trainsState.loading &&
+      (priority.total === 0 || priority.done >= priority.total),
   )
 
   /**
@@ -670,27 +715,6 @@ export default function App() {
   // An explicit pick wins; otherwise fall back to whichever train this Steam
   // id is driving. Both are looked up in the unfiltered live set, since the
   // driver's train is usually nowhere near the dispatch post.
-  const driverTrain = useMemo(() => {
-    if (driverTrainNo) {
-      const picked = allTrains.find((t) => t.number === driverTrainNo)
-      if (picked) return picked
-    }
-    const id = steamId.trim()
-    if (id) return allTrains.find((t) => t.controlledBy === id) ?? null
-    return null
-  }, [allTrains, driverTrainNo, steamId])
-
-  const driverCandidates = useMemo(() => {
-    const q = driverQuery.trim().toLowerCase()
-    const pool = q
-      ? allTrains.filter(
-          (t) =>
-            t.number.toLowerCase().includes(q) ||
-            t.type.toLowerCase().includes(q),
-        )
-      : allTrains.filter((t) => t.driver === 'player')
-    return pool.slice(0, 60)
-  }, [allTrains, driverQuery])
 
   // Built from every train at the post, not the filtered list: a schematic
   // that hides trains because of a category filter would misrepresent the
@@ -738,9 +762,20 @@ export default function App() {
 
   // Alerts watch every train at the post, not the filtered view — muting a
   // category in the list must not mute the problems it contains.
-  const [alertSettings, setAlertSettings] = useLocalStorage<AlertSettings>(
+  const [storedAlerts, setAlertSettings] = useLocalStorage<AlertSettings>(
     'alerts',
     DEFAULT_ALERT_SETTINGS,
+  )
+  // Settings saved by an earlier build are returned verbatim, so any alert
+  // kind added since would be missing and read as disabled. Merge over the
+  // defaults rather than trusting the stored shape.
+  const alertSettings: AlertSettings = useMemo(
+    () => ({
+      ...DEFAULT_ALERT_SETTINGS,
+      ...storedAlerts,
+      kinds: { ...DEFAULT_ALERT_SETTINGS.kinds, ...storedAlerts?.kinds },
+    }),
+    [storedAlerts],
   )
   const [keepAwake, setKeepAwake] = useLocalStorage<boolean>('keepAwake', false)
   const { supported: wakeLockSupported } = useWakeLock(keepAwake)
@@ -790,8 +825,13 @@ export default function App() {
         return false
       if (currentFilter === 'freight' && t.category !== 'freight') return false
       if (currentFilter === 'delayed' && t.delay <= 0) return false
-      if (currentFilter === 'approaching' && t.status !== 'approaching')
-        return false
+      // `status` never carries 'approaching' — rowToTrain only produces
+      // standing/enroute/scheduled — so this filter matched nothing. It now
+      // uses the derived state, which is what the colour key shows.
+      if (currentFilter === 'approaching') {
+        const st = stateByNumber.get(t.number)
+        if (st !== 'arriving' && st !== 'atPlatform' && st !== 'due') return false
+      }
       if (
         searchQuery &&
         !t.number.includes(searchQuery) &&
@@ -801,7 +841,7 @@ export default function App() {
       return true
     })
     return sortByETA(filtered, nowSec)
-  }, [trains, currentFilter, searchQuery, nowSec])
+  }, [trains, currentFilter, searchQuery, nowSec, stateByNumber])
 
   // Counts per filter — respects current search so numbers match visible list.
   const filterCounts = useMemo(() => {
@@ -818,9 +858,12 @@ export default function App() {
       passenger: bySearch.filter((t) => t.category === 'passenger').length,
       freight: bySearch.filter((t) => t.category === 'freight').length,
       delayed: bySearch.filter((t) => t.delay > 0).length,
-      approaching: bySearch.filter((t) => t.status === 'approaching').length,
+      approaching: bySearch.filter((t) => {
+        const st = stateByNumber.get(t.number)
+        return st === 'arriving' || st === 'atPlatform' || st === 'due'
+      }).length,
     } as Record<Filter, number>
-  }, [trains, searchQuery])
+  }, [trains, searchQuery, stateByNumber])
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -896,6 +939,16 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Every ETA, delay and conflict is measured against the in-game clock.
+          Without it the app falls back to a fixed 08:00 reference, which
+          produces confident, completely wrong times — worse than none. */}
+      {serverNowSec === null && hasLiveTrains && (
+        <div className="px-3 py-2 border-b border-amber-500/40 bg-amber-500/15 text-[11px] text-amber-200">
+          <span className="font-semibold">Server clock unavailable</span> — ETAs
+          and delays are not reliable until it syncs.
+        </div>
+      )}
 
       {/* Loading has to be legible, not a blank screen. Nearby schedules land
           first and the count climbs; the whole-server download continues
@@ -1058,16 +1111,17 @@ export default function App() {
         </div>
       )}
 
-      {/* Sample data must announce itself. When the API is slow or down the
-          app falls back to the mock train set, which looks entirely
-          plausible — real-looking numbers, times and platforms. Planning
-          moves against invented trains is far worse than an empty screen. */}
+      {/* Rows come from the booked schedule, so they stay correct without the
+          live feed — but speed, signals, delay and every state colour depend
+          on it. Say which half is missing rather than implying the trains
+          themselves are fake, which is what this banner used to claim back
+          when the mock set fed the list. */}
       {!hasLiveTrains && (
         <div className="px-4 py-2 bg-amber-500/15 border-b border-amber-500/40 text-[11px] text-amber-300 flex items-center gap-2">
-          <span className="font-semibold">Sample data</span>
+          <span className="font-semibold">No live positions</span>
           <span className="text-amber-200/80">
             {trainsState.error
-              ? 'Live feed unreachable — these trains are not real.'
+              ? 'Live feed unreachable — times are booked, not actual.'
               : 'Waiting for the live feed…'}
           </span>
         </div>
